@@ -1,7 +1,6 @@
-use std::fs::DirBuilder;
-
 use mongodb::bson::{bson, doc, Bson};
 use serde::Deserialize;
+use tempdir::TempDir;
 use uuid::Uuid;
 
 use super::*;
@@ -19,14 +18,14 @@ impl AutoShutdownCluster {
     }
 }
 
-// impl Drop for AutoShutdownCluster {
-//     fn drop(&mut self) {
-//         let _ = self
-//             .client
-//             .database("admin")
-//             .run_command(doc! { "shutdown": 1 }, None);
-//     }
-// }
+impl Drop for AutoShutdownCluster {
+    fn drop(&mut self) {
+        let _ = self
+            .client
+            .database("admin")
+            .run_command(doc! { "shutdown": 1 }, None);
+    }
+}
 
 impl std::ops::Deref for AutoShutdownCluster {
     type Target = Cluster;
@@ -38,13 +37,11 @@ impl std::ops::Deref for AutoShutdownCluster {
 
 #[derive(Debug, Deserialize)]
 struct ReplSetStatus {
-    ok: f64,
+    set: String,
 }
 
-fn create_temp_dir() -> PathBuf {
-    let dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
-    DirBuilder::new().create(&dir).unwrap();
-    dir
+fn create_temp_dir() -> TempDir {
+    TempDir::new(&Uuid::new_v4().to_string()).unwrap()
 }
 
 #[test]
@@ -56,7 +53,7 @@ fn create_and_initiate_repl_set() {
             nodes: 3,
             set_name: "test-repl-set".into(),
         },
-        db_dirs,
+        db_dirs.iter().map(|t| t.path().into()).collect(),
     );
 
     let response = cluster
@@ -65,7 +62,7 @@ fn create_and_initiate_repl_set() {
         .run_command(doc! { "replSetGetStatus" : 1 }, None)
         .unwrap();
 
-    let ReplSetStatus { ok } = mongodb::bson::from_bson(Bson::Document(response)).unwrap();
+    let ReplSetStatus { set } = mongodb::bson::from_bson(Bson::Document(response)).unwrap();
 
-    assert_eq!(ok, 1.0);
+    assert_eq!(set, "test-repl-set");
 }

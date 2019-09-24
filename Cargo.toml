@@ -13,6 +13,9 @@ err-derive = "0.1.5"
 version = "1.0.101"
 features = ["derive"]
 
+[dev-dependencies]
+tempdir = "0.3.7"
+
 [dev-dependencies.uuid]
 version = "0.7.4"
 features = [ "v4" ]
