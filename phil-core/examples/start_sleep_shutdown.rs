@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use phil::cluster::{Cluster, Topology};
+use phil_core::cluster::{Cluster, Topology};
 
 fn main() {
     let cluster = Cluster::new(Topology::Single).unwrap();

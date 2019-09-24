@@ -1,0 +1,21 @@
+[package]
+name = "phil-core"
+version = "0.1.0"
+authors = ["Saghm Rossi <saghmrossi@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+monger-core = { path = "/home/saghm/code/projects/monger/monger-core" }
+mongodb = { path = "/home/saghm/code/mongo/rust/driver" }
+err-derive = "0.1.5"
+
+[dependencies.serde]
+version = "1.0.101"
+features = ["derive"]
+
+[dev-dependencies]
+tempdir = "0.3.7"
+
+[dev-dependencies.uuid]
+version = "0.7.4"
+features = [ "v4" ]
