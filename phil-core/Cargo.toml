@@ -6,8 +6,10 @@ edition = "2018"
 
 [dependencies]
 monger-core = { path = "/home/saghm/code/projects/monger/monger-core" }
-mongodb = { path = "/home/saghm/code/mongo/rust/driver" }
-err-derive = "0.1.5"
+err-derive = "0.1.6"
+
+[dependencies.mongodb]
+path = "/home/saghm/code/mongo/rust/driver"
 
 [dependencies.serde]
 version = "1.0.101"

@@ -31,6 +31,7 @@ pub enum Topology {
 pub struct Cluster {
     monger: Monger,
     client: Client,
+    client_options: ClientOptions,
     nodes: Vec<Host>,
     topology: Topology,
 }
@@ -65,6 +66,10 @@ impl Cluster {
         }
     }
 
+    pub fn client_options(&self) -> &ClientOptions {
+        &self.client_options
+    }
+
     fn start_single_server(path: Option<PathBuf>) -> Result<Self> {
         let nodes = vec![Host::new("localhost".into(), Some(27017))];
         let monger = Monger::new()?;
@@ -81,11 +86,13 @@ impl Cluster {
 
         monger.start_mongod(args, "4.2.0", ChildType::Fork)?;
 
-        let client = Client::with_options(ClientOptions::builder().hosts(nodes.clone()).build())?;
+        let client_options = ClientOptions::builder().hosts(nodes.clone()).build();
+        let client = Client::with_options(client_options.clone())?;
 
         Ok(Self {
             monger,
             client,
+            client_options,
             nodes,
             topology: Topology::Single,
         })
@@ -115,12 +122,11 @@ impl Cluster {
             monger.start_mongod(args, "4.2.0", ChildType::Fork)?;
         }
 
-        let client = Client::with_options(
-            ClientOptions::builder()
-                .hosts(nodes.clone())
-                .repl_set_name(set_name.clone())
-                .build(),
-        )?;
+        let client_options = ClientOptions::builder()
+            .hosts(nodes.clone())
+            .repl_set_name(set_name.clone())
+            .build();
+        let client = Client::with_options(client_options.clone())?;
 
         let config = doc! {
             "_id": set_name.clone(),
@@ -143,6 +149,7 @@ impl Cluster {
             },
             monger,
             client,
+            client_options,
             nodes,
         })
     }

@@ -1,30 +1,26 @@
 use err_derive::Error;
-use mongodb::bson::Document;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
     #[error(display = "{}", inner)]
-    BsonDecoder {
+    Io {
         #[error(cause)]
-        inner: mongodb::bson::DecoderError,
+        inner: std::io::Error,
     },
 
     #[error(display = "{}", inner)]
-    Monger {
+    ParseInt {
         #[error(cause)]
-        inner: monger_core::error::Error,
+        inner: std::num::ParseIntError,
     },
 
     #[error(display = "{}", inner)]
-    Mongo {
+    Phil {
         #[error(cause)]
-        inner: mongodb::error::Error,
+        inner: phil_core::error::Error,
     },
-
-    #[error(display = "error when configuring replica set: {}", response)]
-    ReplicaSetConfigError { response: Document },
 }
 
 macro_rules! define_error_from {
@@ -37,6 +33,6 @@ macro_rules! define_error_from {
     };
 }
 
-define_error_from!(monger_core::error::Error, Monger);
-define_error_from!(mongodb::bson::DecoderError, BsonDecoder);
-define_error_from!(mongodb::error::Error, Mongo);
+define_error_from!(std::io::Error, Io);
+define_error_from!(std::num::ParseIntError, ParseInt);
+define_error_from!(phil_core::error::Error, Phil);
