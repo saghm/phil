@@ -6,11 +6,12 @@ use std::{collections::VecDeque, ffi::OsString, path::PathBuf};
 use monger_core::{process::ChildType, Monger};
 use mongodb::{
     bson::{bson, doc, Bson, Document},
-    options::{ClientOptions, Host},
+    options::{ClientOptions, Host, TlsOptions as DriverTlsOptions},
     read_preference::ReadPreference,
     Client,
 };
 use serde::Deserialize;
+use typed_builder::TypedBuilder;
 
 use crate::error::{Error, Result};
 
@@ -34,6 +35,34 @@ pub struct Cluster {
     client_options: ClientOptions,
     nodes: Vec<Host>,
     topology: Topology,
+    tls: Option<TlsOptions>,
+}
+
+#[derive(Debug, TypedBuilder)]
+pub struct ClusterOptions {
+    pub topology: Topology,
+
+    #[builder(default)]
+    pub paths: Vec<PathBuf>,
+
+    #[builder(default)]
+    pub tls: Option<TlsOptions>,
+}
+
+#[derive(Debug)]
+pub struct TlsOptions {
+    pub allow_invalid_certificates: bool,
+    pub ca_file_path: PathBuf,
+    pub cert_file_path: PathBuf,
+}
+
+impl From<TlsOptions> for DriverTlsOptions {
+    fn from(opts: TlsOptions) -> Self {
+        Self::builder()
+            .allow_invalid_certificates(opts.allow_invalid_certificates)
+            .ca_file_path(opts.ca_file_path.to_string_lossy().into_owned())
+            .build()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -43,22 +72,33 @@ pub struct CommandResponse {
     pub code_name: Option<String>,
 }
 
-impl Cluster {
-    pub fn new(topology: Topology) -> Result<Self> {
-        Self::with_paths(topology, Vec::new())
+fn add_tls_options(args: &mut Vec<OsString>, tls_options: Option<&TlsOptions>) {
+    if let Some(tls_options) = tls_options {
+        args.extend_from_slice(&[
+            OsString::from("--tlsMode"),
+            OsString::from("requireTLS"),
+            OsString::from("--tlsCAFile"),
+            OsString::from(&tls_options.ca_file_path),
+            OsString::from("--tlsCertificateKeyFile"),
+            OsString::from(&tls_options.cert_file_path),
+            OsString::from("--tlsAllowConnectionsWithoutCertificates"),
+        ]);
     }
+}
 
-    pub fn with_paths(topology: Topology, paths: Vec<PathBuf>) -> Result<Self> {
-        match topology {
-            Topology::Single => Self::start_single_server(paths.into_iter().next()),
+impl Cluster {
+    pub fn new(options: ClusterOptions) -> Result<Self> {
+        match options.topology {
+            Topology::Single => {
+                Self::start_single_server(options.paths.into_iter().next(), options.tls)
+            }
             Topology::ReplicaSet { nodes, set_name } => {
-                Self::start_replica_set(nodes, set_name, paths)
+                Self::start_replica_set(nodes, set_name, options.paths, options.tls)
             }
             Topology::Sharded {
                 replica_set_shards: false,
                 ..
             } => unimplemented!(),
-
             Topology::Sharded {
                 replica_set_shards: true,
                 ..
@@ -70,7 +110,7 @@ impl Cluster {
         &self.client_options
     }
 
-    fn start_single_server(path: Option<PathBuf>) -> Result<Self> {
+    fn start_single_server(path: Option<PathBuf>, tls_options: Option<TlsOptions>) -> Result<Self> {
         let nodes = vec![Host::new("localhost".into(), Some(27017))];
         let monger = Monger::new()?;
 
@@ -84,9 +124,13 @@ impl Cluster {
             args.push(path.into_os_string());
         }
 
+        add_tls_options(&mut args, tls_options.as_ref());
         monger.start_mongod(args, "4.2.0", ChildType::Fork)?;
 
-        let client_options = ClientOptions::builder().hosts(nodes.clone()).build();
+        let client_options = ClientOptions::builder()
+            .hosts(nodes.clone())
+            .tls_options(tls_options.map(Into::into))
+            .build();
         let client = Client::with_options(client_options.clone())?;
 
         Ok(Self {
@@ -95,10 +139,16 @@ impl Cluster {
             client_options,
             nodes,
             topology: Topology::Single,
+            tls: None,
         })
     }
 
-    fn start_replica_set(nodes: u8, set_name: String, paths: Vec<PathBuf>) -> Result<Self> {
+    fn start_replica_set(
+        nodes: u8,
+        set_name: String,
+        paths: Vec<PathBuf>,
+        tls_options: Option<TlsOptions>,
+    ) -> Result<Self> {
         let nodes: Vec<_> = (0..nodes)
             .map(|i| Host::new("localhost".into(), Some(27017 + i as u16)))
             .collect();
@@ -119,12 +169,14 @@ impl Cluster {
                 args.push(path.into_os_string());
             }
 
+            add_tls_options(&mut args, tls_options.as_ref());
             monger.start_mongod(args, "4.2.0", ChildType::Fork)?;
         }
 
         let client_options = ClientOptions::builder()
             .hosts(nodes.clone())
             .repl_set_name(set_name.clone())
+            .tls_options(tls_options.map(Into::into))
             .build();
         let client = Client::with_options(client_options.clone())?;
 
@@ -151,6 +203,7 @@ impl Cluster {
             client,
             client_options,
             nodes,
+            tls: None,
         })
     }
 

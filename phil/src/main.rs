@@ -3,7 +3,7 @@ mod error;
 use std::{fs::DirBuilder, path::PathBuf};
 
 use clap::{crate_authors, crate_description, crate_version, App, AppSettings, Arg};
-use phil_core::cluster::{Cluster, Topology};
+use phil_core::cluster::{Cluster, ClusterOptions, TlsOptions, Topology};
 use uuid::Uuid;
 
 use crate::error::Result;
@@ -44,19 +44,40 @@ fn main() -> Result<()> {
                 .requires_if("topology", "replset")
                 .takes_value(true),
         )
+        .arg(
+            Arg::with_name("weak-tls")
+                .help("enable (and require) TLS for the cluster using built-in (i.e. non-secret) certificates")
+                .long("weak-tls")
+                .takes_value(false),
+        )
         .get_matches();
 
-    let cluster = match matches.value_of("topology").unwrap() {
-        "single" => Cluster::new(Topology::Single)?,
+    let mut cluster_options = match matches.value_of("topology").unwrap() {
+        "single" => ClusterOptions::builder().topology(Topology::Single).build(),
         "replset" => {
             let nodes = matches.value_of("nodes").unwrap_or("3").parse()?;
             let set_name = matches.value_of("set-name").unwrap_or("phil").into();
             let paths: Result<Vec<_>> = (0..nodes).map(|_| create_tempdir()).collect();
 
-            Cluster::with_paths(Topology::ReplicaSet { nodes, set_name }, paths?)?
+            ClusterOptions::builder()
+                .topology(Topology::ReplicaSet { nodes, set_name })
+                .paths(paths?)
+                .build()
         }
         _ => unimplemented!(),
     };
+
+    if matches.is_present("weak-tls") {
+        cluster_options.tls = Some(TlsOptions {
+            allow_invalid_certificates: true,
+            ca_file_path: [env!("CARGO_MANIFEST_DIR"), "ca.pem"].into_iter().collect(),
+            cert_file_path: [env!("CARGO_MANIFEST_DIR"), "server.pem"]
+                .into_iter()
+                .collect(),
+        });
+    }
+
+    let cluster = Cluster::new(cluster_options)?;
 
     println!("MONGODB_URI='{}'", cluster.client_options());
 

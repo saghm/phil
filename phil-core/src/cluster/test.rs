@@ -11,9 +11,9 @@ struct AutoShutdownCluster {
 }
 
 impl AutoShutdownCluster {
-    fn with_paths(topology: Topology, paths: Vec<PathBuf>) -> Self {
+    fn new(options: ClusterOptions) -> Self {
         Self {
-            cluster: Cluster::with_paths(topology, paths).unwrap(),
+            cluster: Cluster::new(options).unwrap(),
         }
     }
 }
@@ -48,13 +48,20 @@ fn create_temp_dir() -> TempDir {
 fn create_and_initiate_repl_set() {
     let db_dirs: Vec<_> = (0..3).map(|_| create_temp_dir()).collect();
 
-    let cluster = AutoShutdownCluster::with_paths(
-        Topology::ReplicaSet {
+    let cluster_options = ClusterOptions::builder()
+        .topology(Topology::ReplicaSet {
             nodes: 3,
             set_name: "test-repl-set".into(),
-        },
-        db_dirs.iter().map(|t| t.path().into()).collect(),
-    );
+        })
+        .paths(
+            db_dirs
+                .iter()
+                .map(|t| t.path().to_path_buf())
+                .collect::<Vec<_>>(),
+        )
+        .build();
+
+    let cluster = AutoShutdownCluster::new(cluster_options);
 
     let response = cluster
         .client

@@ -5,11 +5,19 @@ authors = ["Saghm Rossi <saghmrossi@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-monger-core = { path = "/home/saghm/code/projects/monger/monger-core" }
 err-derive = "0.1.6"
+typed-builder = "0.3.0"
+percent-encoding = "2.1.0"
+
+[dependencies.monger-core]
+#path = "/home/saghm/code/projects/monger/monger-core"
+git = "file:///home/saghm/code/projects/monger"
+branch = "experimental"
 
 [dependencies.mongodb]
-path = "/home/saghm/code/mongo/rust/driver"
+#path = "/home/saghm/code/mongo/rust/driver"
+git = "file:///home/saghm/code/mongo/rust/driver"
+branch = "foo"
 
 [dependencies.serde]
 version = "1.0.101"
