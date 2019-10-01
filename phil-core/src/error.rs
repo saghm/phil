@@ -5,6 +5,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error(display = "error when adding shard: {}", response)]
+    AddShardError { response: Document },
+
     #[error(display = "{}", inner)]
     BsonDecoder {
         #[error(cause)]

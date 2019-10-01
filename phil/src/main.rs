@@ -16,6 +16,7 @@ fn create_tempdir() -> Result<PathBuf> {
 }
 
 fn main() -> Result<()> {
+    #[allow(deprecated)]
     let matches = App::new("phil")
         .version(crate_version!())
         .author(crate_authors!("\n"))
@@ -26,7 +27,7 @@ fn main() -> Result<()> {
                 .help("The topology type of the cluster to start")
                 .required(true)
                 .index(1)
-                .possible_values(&["single", "replset"]),
+                .possible_values(&["single", "replset", "sharded"]),
         )
         .arg(
             Arg::with_name("nodes")
@@ -45,6 +46,21 @@ fn main() -> Result<()> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("num-shards")
+                .help("the number of shards to start")
+                .long("num-shards")
+                .requires_if("topology", "sharded")
+                .takes_value(true)
+        )
+        .arg(
+            Arg::with_name("shard-type")
+                .help("what type of shards to start")
+                .long("shard-type")
+                .requires_if("topology", "sharded")
+                .takes_value(true)
+                .possible_values(&["single", "replset"])
+        )
+        .arg(
             Arg::with_name("weak-tls")
                 .help("enable (and require) TLS for the cluster using built-in (i.e. non-secret) certificates")
                 .long("weak-tls")
@@ -61,6 +77,22 @@ fn main() -> Result<()> {
 
             ClusterOptions::builder()
                 .topology(Topology::ReplicaSet { nodes, set_name })
+                .paths(paths?)
+                .build()
+        }
+        "sharded" if matches.value_of("shard-type") == Some("single") => {
+            let num_shards = matches.value_of("num-shards").unwrap_or("1").parse()?;
+            let replica_set_shards = matches
+                .value_of("shard-type")
+                .map(|shard_type| shard_type == "replset")
+                .unwrap_or(true);
+            let paths: Result<Vec<_>> = (0..num_shards).map(|_| create_tempdir()).collect();
+
+            ClusterOptions::builder()
+                .topology(Topology::Sharded {
+                    num_shards,
+                    replica_set_shards,
+                })
                 .paths(paths?)
                 .build()
         }
