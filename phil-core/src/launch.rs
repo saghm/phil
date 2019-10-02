@@ -102,6 +102,7 @@ fn configure_repl_set(client: &Client, config: Document) -> Result<()> {
 
 pub(crate) fn mongos(
     monger: &Monger,
+    version_id: &str,
     port: u16,
     config_port: u16,
     config_name: &str,
@@ -118,7 +119,7 @@ pub(crate) fn mongos(
 
     add_tls_options(&mut args, tls_options);
 
-    monger.command("mongos", args, "4.2.0", ChildType::Fork)?;
+    monger.command("mongos", args, version_id, ChildType::Fork)?;
 
     let client = Client::with_options(
         ClientOptions::builder()
@@ -152,6 +153,7 @@ pub(crate) fn mongos(
 
 pub(crate) fn single_server(
     monger: &Monger,
+    version_id: &str,
     port: u16,
     path: Option<PathBuf>,
     tls_options: Option<&TlsOptions>,
@@ -169,13 +171,14 @@ pub(crate) fn single_server(
     }
 
     add_tls_options(&mut args, tls_options);
-    monger.start_mongod(args, "4.2.0", ChildType::Fork)?;
+    monger.start_mongod(args, version_id, ChildType::Fork)?;
 
     Ok(())
 }
 
 pub(crate) fn replica_set(
     monger: &Monger,
+    version_id: &str,
     hosts: Vec<Host>,
     set_name: &str,
     mut paths: impl Iterator<Item = PathBuf>,
@@ -202,7 +205,7 @@ pub(crate) fn replica_set(
         };
 
         add_tls_options(&mut args, tls_options);
-        monger.start_mongod(args, "4.2.0", ChildType::Fork)?;
+        monger.start_mongod(args, version_id, ChildType::Fork)?;
     }
 
     let config = doc! {

@@ -26,11 +26,17 @@ fn main() -> Result<()> {
         .about(crate_description!())
         .setting(AppSettings::ArgRequiredElseHelp)
         .arg(
-            Arg::with_name("topology")
+            Arg::with_name("TOPOLOGY")
                 .help("The topology type of the cluster to start")
                 .required(true)
                 .index(1)
                 .possible_values(&["single", "replset", "sharded"]),
+        )
+        .arg(
+            Arg::with_name("ID")
+                .help("the ID of the database version managed by monger to use")
+                .required(true)
+                .index(2)
         )
         .arg(
             Arg::with_name("nodes")
@@ -86,8 +92,13 @@ fn main() -> Result<()> {
         )
         .get_matches();
 
-    let mut cluster_options = match matches.value_of("topology").unwrap() {
-        "single" => ClusterOptions::builder().topology(Topology::Single).build(),
+    let version_id = matches.value_of("ID").unwrap().to_string();
+
+    let mut cluster_options = match matches.value_of("TOPOLOGY").unwrap() {
+        "single" => ClusterOptions::builder()
+            .topology(Topology::Single)
+            .version_id(version_id)
+            .build(),
         "replset" => {
             let nodes = matches.value_of("nodes").unwrap_or("3").parse()?;
             let set_name = matches.value_of("set-name").unwrap_or("phil").into();
@@ -95,6 +106,7 @@ fn main() -> Result<()> {
 
             ClusterOptions::builder()
                 .topology(Topology::ReplicaSet { nodes, set_name })
+                .version_id(version_id)
                 .paths(paths?)
                 .build()
         }
@@ -116,6 +128,7 @@ fn main() -> Result<()> {
                     num_shards,
                     replica_set_shards,
                 })
+                .version_id(version_id)
                 .paths(paths?)
                 .build()
         }

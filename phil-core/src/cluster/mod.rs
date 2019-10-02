@@ -43,6 +43,8 @@ pub struct Cluster {
 pub struct ClusterOptions {
     pub topology: Topology,
 
+    pub version_id: String,
+
     #[builder(default)]
     pub paths: Vec<PathBuf>,
 
@@ -69,20 +71,36 @@ impl From<TlsOptions> for DriverTlsOptions {
 impl Cluster {
     pub fn new(options: ClusterOptions) -> Result<Self> {
         match options.topology {
-            Topology::Single => {
-                Self::start_single_server(options.paths.into_iter().next(), options.tls)
-            }
-            Topology::ReplicaSet { nodes, set_name } => {
-                Self::start_replica_set(nodes, set_name, options.paths, options.tls)
-            }
+            Topology::Single => Self::start_single_server(
+                options.version_id,
+                options.paths.into_iter().next(),
+                options.tls,
+            ),
+            Topology::ReplicaSet { nodes, set_name } => Self::start_replica_set(
+                options.version_id,
+                nodes,
+                set_name,
+                options.paths,
+                options.tls,
+            ),
             Topology::Sharded {
                 num_shards,
                 replica_set_shards: false,
-            } => Self::start_singleton_shards(num_shards, options.paths, options.tls),
+            } => Self::start_singleton_shards(
+                options.version_id,
+                num_shards,
+                options.paths,
+                options.tls,
+            ),
             Topology::Sharded {
                 num_shards,
                 replica_set_shards: true,
-            } => Self::start_replset_shards(num_shards, options.paths, options.tls),
+            } => Self::start_replset_shards(
+                options.version_id,
+                num_shards,
+                options.paths,
+                options.tls,
+            ),
         }
     }
 
@@ -90,11 +108,22 @@ impl Cluster {
         &self.client_options
     }
 
-    fn start_single_server(path: Option<PathBuf>, tls_options: Option<TlsOptions>) -> Result<Self> {
+    fn start_single_server(
+        version_id: String,
+        path: Option<PathBuf>,
+        tls_options: Option<TlsOptions>,
+    ) -> Result<Self> {
         let hosts = vec![Host::new("localhost".into(), Some(27017))];
         let monger = Monger::new()?;
 
-        launch::single_server(&monger, 27017, path, tls_options.as_ref(), false)?;
+        launch::single_server(
+            &monger,
+            &version_id,
+            27017,
+            path,
+            tls_options.as_ref(),
+            false,
+        )?;
 
         let client_options = ClientOptions::builder()
             .hosts(hosts.clone())
@@ -113,6 +142,7 @@ impl Cluster {
     }
 
     fn start_replica_set(
+        version_id: String,
         nodes: u8,
         set_name: String,
         paths: Vec<PathBuf>,
@@ -125,6 +155,7 @@ impl Cluster {
 
         let client = launch::replica_set(
             &monger,
+            &version_id,
             hosts.clone(),
             &set_name,
             paths.into_iter(),
@@ -152,6 +183,7 @@ impl Cluster {
     }
 
     fn start_singleton_shards(
+        version_id: String,
         num_shards: u8,
         paths: Vec<PathBuf>,
         tls_options: Option<TlsOptions>,
@@ -164,11 +196,19 @@ impl Cluster {
 
         let shard_ports = (0..num_shards).map(|i| 27020 + i as u16);
         for port in shard_ports.clone() {
-            launch::single_server(&monger, port, paths.next(), tls_options.as_ref(), true)?;
+            launch::single_server(
+                &monger,
+                &version_id,
+                port,
+                paths.next(),
+                tls_options.as_ref(),
+                true,
+            )?;
         }
 
         launch::replica_set(
             &monger,
+            &version_id,
             vec![Host::new("localhost".into(), Some(config_port))],
             "phil-config-server",
             std::iter::empty(),
@@ -178,6 +218,7 @@ impl Cluster {
 
         launch::mongos(
             &monger,
+            &version_id,
             mongos_port1,
             config_port,
             "phil-config-server",
@@ -187,6 +228,7 @@ impl Cluster {
         )?;
         launch::mongos(
             &monger,
+            &version_id,
             mongos_port2,
             config_port,
             "phil-config-server",
@@ -220,6 +262,7 @@ impl Cluster {
     }
 
     fn start_replset_shards(
+        version_id: String,
         num_shards: u8,
         paths: Vec<PathBuf>,
         tls_options: Option<TlsOptions>,
@@ -237,6 +280,7 @@ impl Cluster {
         for (i, port) in shard_ports.clone().enumerate() {
             launch::replica_set(
                 &monger,
+                &version_id,
                 (port..port + 3)
                     .map(|p| Host::new("localhost".into(), Some(p)))
                     .collect(),
@@ -249,6 +293,7 @@ impl Cluster {
 
         launch::replica_set(
             &monger,
+            &version_id,
             vec![Host::new("localhost".into(), Some(config_port))],
             "phil-config-server",
             std::iter::empty(),
@@ -258,6 +303,7 @@ impl Cluster {
 
         launch::mongos(
             &monger,
+            &version_id,
             mongos_port1,
             config_port,
             "phil-config-server",
@@ -267,6 +313,7 @@ impl Cluster {
         )?;
         launch::mongos(
             &monger,
+            &version_id,
             mongos_port2,
             config_port,
             "phil-config-server",
