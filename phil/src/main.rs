@@ -65,9 +65,23 @@ fn main() -> Result<()> {
         )
         .arg(
             Arg::with_name("weak-tls")
-                .help("enable (and require) TLS for the cluster using built-in (i.e. non-secret) certificates")
+                .help("enable (and require) TLS for the cluster without verifying client certificates")
                 .long("weak-tls")
                 .takes_value(false),
+        )
+        .arg(
+            Arg::with_name("ca-file")
+                .help("the certificate authority file to use for TLS (defaults to ./ca.pem)")
+                .long("ca-file")
+                .takes_value(true)
+                .requires("weak-tls")
+        )
+        .arg(
+            Arg::with_name("cert-file")
+                .help("the private key certificate file to use for TLS (defaults to ./server.pem)")
+                .long("cert-file")
+                .takes_value(true)
+                .requires("weak-tls")
         )
         .get_matches();
 
@@ -103,10 +117,15 @@ fn main() -> Result<()> {
     };
 
     if matches.is_present("weak-tls") {
+        let ca_file_path =
+            Path::new(matches.value_of("ca-file").unwrap_or("./ca.pem")).canonicalize()?;
+        let cert_file_path =
+            Path::new(matches.value_of("cert-file").unwrap_or("./server.pem")).canonicalize()?;
+
         cluster_options.tls = Some(TlsOptions {
             allow_invalid_certificates: true,
-            ca_file_path: Path::new("./ca.pem").canonicalize()?,
-            cert_file_path: Path::new("./server.pem").canonicalize()?,
+            ca_file_path,
+            cert_file_path,
         });
     }
 
