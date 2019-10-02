@@ -1,6 +1,9 @@
 mod error;
 
-use std::{fs::DirBuilder, path::PathBuf};
+use std::{
+    fs::DirBuilder,
+    path::{Path, PathBuf},
+};
 
 use clap::{crate_authors, crate_description, crate_version, App, AppSettings, Arg};
 use phil_core::cluster::{Cluster, ClusterOptions, TlsOptions, Topology};
@@ -102,10 +105,8 @@ fn main() -> Result<()> {
     if matches.is_present("weak-tls") {
         cluster_options.tls = Some(TlsOptions {
             allow_invalid_certificates: true,
-            ca_file_path: [env!("CARGO_MANIFEST_DIR"), "ca.pem"].into_iter().collect(),
-            cert_file_path: [env!("CARGO_MANIFEST_DIR"), "server.pem"]
-                .into_iter()
-                .collect(),
+            ca_file_path: Path::new("./ca.pem").canonicalize()?,
+            cert_file_path: Path::new("./server.pem").canonicalize()?,
         });
     }
 
