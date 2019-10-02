@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, ffi::OsString, path::PathBuf};
+use std::{ffi::OsString, path::PathBuf, time::Duration};
 
 use monger_core::{process::ChildType, Monger};
 use mongodb::{
@@ -29,6 +29,18 @@ struct CommandResponse {
     pub code_name: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReplSetStatus {
+    members: Vec<ReplSetMember>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReplSetMember {
+    state_str: String,
+}
+
 fn add_tls_options(args: &mut Vec<OsString>, tls_options: Option<&TlsOptions>) {
     if let Some(tls_options) = tls_options {
         args.extend_from_slice(&[
@@ -45,15 +57,16 @@ fn add_tls_options(args: &mut Vec<OsString>, tls_options: Option<&TlsOptions>) {
 
 fn configure_repl_set(client: &Client, config: Document) -> Result<()> {
     let db = client.database("admin");
+    let read_pref = Some(ReadPreference::Nearest {
+        tag_sets: None,
+        max_staleness: None,
+    });
 
     let response = db.run_command(
         doc! {
             "replSetInitiate": config.clone(),
         },
-        Some(ReadPreference::Nearest {
-            tag_sets: None,
-            max_staleness: None,
-        }),
+        read_pref.clone(),
     )?;
 
     let CommandResponse { ok, code_name } =
@@ -73,13 +86,18 @@ fn configure_repl_set(client: &Client, config: Document) -> Result<()> {
         doc! {
             "replSetReconfig": config,
         },
-        Some(ReadPreference::Nearest {
-            tag_sets: None,
-            max_staleness: None,
-        }),
+        read_pref.clone(),
     )?;
 
-    Ok(())
+    loop {
+        std::thread::sleep(Duration::from_millis(500));
+
+        let response = db.run_command(doc! { "replSetGetStatus": 1 }, read_pref.clone())?;
+        let ReplSetStatus { members } = mongodb::bson::from_bson(Bson::Document(response))?;
+        if members.iter().any(|member| member.state_str == "PRIMARY") {
+            return Ok(());
+        }
+    }
 }
 
 pub(crate) fn mongos(
@@ -89,6 +107,7 @@ pub(crate) fn mongos(
     config_name: &str,
     shard_ports: impl IntoIterator<Item = u16>,
     tls_options: Option<&TlsOptions>,
+    shard_names: Option<Vec<String>>,
 ) -> Result<Client> {
     let mut args = vec![
         OsString::from("--port"),
@@ -108,11 +127,17 @@ pub(crate) fn mongos(
             .build(),
     )?;
 
+    let mut shard_names = shard_names.map(IntoIterator::into_iter);
+
     for shard_port in shard_ports {
-        let response = client.database("admin").run_command(
-            doc! { "addShard": format!("localhost:{}", shard_port) },
-            None,
-        )?;
+        let shard_name = match shard_names.as_mut().and_then(Iterator::next) {
+            Some(name) => format!("{}/localhost:{}", name, shard_port),
+            None => format!("localhost:{}", shard_port),
+        };
+
+        let response = client
+            .database("admin")
+            .run_command(doc! { "addShard": shard_name }, None)?;
 
         let CommandResponse { ok, .. } =
             mongodb::bson::from_bson(Bson::Document(response.clone()))?;
@@ -153,12 +178,10 @@ pub(crate) fn replica_set(
     monger: &Monger,
     hosts: Vec<Host>,
     set_name: &str,
-    paths: impl IntoIterator<Item = PathBuf>,
+    mut paths: impl Iterator<Item = PathBuf>,
     tls_options: Option<&TlsOptions>,
     server_shard_type: ServerShardType,
 ) -> Result<Client> {
-    let mut paths: VecDeque<_> = paths.into_iter().collect();
-
     for host in &hosts {
         let mut args = vec![
             OsString::from("--port".to_string()),
@@ -167,7 +190,7 @@ pub(crate) fn replica_set(
             OsString::from(set_name),
         ];
 
-        if let Some(path) = paths.pop_front() {
+        if let Some(path) = paths.next() {
             args.push(OsString::from("--dbpath"));
             args.push(path.into_os_string());
         }

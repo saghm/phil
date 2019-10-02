@@ -80,9 +80,9 @@ impl Cluster {
                 replica_set_shards: false,
             } => Self::start_singleton_shards(num_shards, options.paths, options.tls),
             Topology::Sharded {
+                num_shards,
                 replica_set_shards: true,
-                ..
-            } => unimplemented!(),
+            } => Self::start_replset_shards(num_shards, options.paths, options.tls),
         }
     }
 
@@ -170,7 +170,7 @@ impl Cluster {
         launch::replica_set(
             &monger,
             vec![Host::new("localhost".into(), Some(config_port))],
-            "dummy-config-server",
+            "phil-config-server",
             std::iter::empty(),
             tls_options.as_ref(),
             ServerShardType::Config,
@@ -180,17 +180,99 @@ impl Cluster {
             &monger,
             mongos_port1,
             config_port,
-            "dummy-config-server",
+            "phil-config-server",
             shard_ports.clone(),
             tls_options.as_ref(),
+            None,
         )?;
         launch::mongos(
             &monger,
             mongos_port2,
             config_port,
-            "dummy-config-server",
+            "phil-config-server",
             shard_ports,
             tls_options.as_ref(),
+            None,
+        )?;
+
+        let hosts = vec![
+            Host::new("localhost".into(), Some(mongos_port1)),
+            Host::new("localhost".into(), Some(mongos_port2)),
+        ];
+
+        let client_options = ClientOptions::builder()
+            .hosts(hosts.clone())
+            .tls_options(tls_options.map(Into::into))
+            .build();
+        let client = Client::with_options(client_options.clone())?;
+
+        Ok(Self {
+            topology: Topology::Sharded {
+                num_shards,
+                replica_set_shards: false,
+            },
+            monger,
+            hosts,
+            client,
+            client_options,
+            tls: None,
+        })
+    }
+
+    fn start_replset_shards(
+        num_shards: u8,
+        paths: Vec<PathBuf>,
+        tls_options: Option<TlsOptions>,
+    ) -> Result<Self> {
+        let monger = Monger::new()?;
+        let mut paths = paths.into_iter();
+        let mongos_port1 = 27017;
+        let mongos_port2 = 27018;
+        let config_port = 27019;
+
+        let shard_ports = (0..num_shards).map(|i| 27020 + (3 * i) as u16);
+        let shard_names: Vec<_> = (0..num_shards)
+            .map(|i| format!("phil-replset-shard-{}", i))
+            .collect();
+        for (i, port) in shard_ports.clone().enumerate() {
+            launch::replica_set(
+                &monger,
+                (port..port + 3)
+                    .map(|p| Host::new("localhost".into(), Some(p)))
+                    .collect(),
+                &shard_names[i],
+                &mut paths,
+                tls_options.as_ref(),
+                ServerShardType::Shard,
+            )?;
+        }
+
+        launch::replica_set(
+            &monger,
+            vec![Host::new("localhost".into(), Some(config_port))],
+            "phil-config-server",
+            std::iter::empty(),
+            tls_options.as_ref(),
+            ServerShardType::Config,
+        )?;
+
+        launch::mongos(
+            &monger,
+            mongos_port1,
+            config_port,
+            "phil-config-server",
+            shard_ports.clone(),
+            tls_options.as_ref(),
+            Some(shard_names.clone()),
+        )?;
+        launch::mongos(
+            &monger,
+            mongos_port2,
+            config_port,
+            "phil-config-server",
+            shard_ports,
+            tls_options.as_ref(),
+            Some(shard_names),
         )?;
 
         let hosts = vec![

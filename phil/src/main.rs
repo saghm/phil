@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::error::Result;
 
 fn create_tempdir() -> Result<PathBuf> {
-    let dir = std::env::temp_dir().join(Uuid::new_v4().to_string());
+    let dir = std::env::temp_dir().join(format!("phil-mongodb-{}", Uuid::new_v4()));
     DirBuilder::new().create(&dir)?;
 
     Ok(dir)
@@ -98,13 +98,18 @@ fn main() -> Result<()> {
                 .paths(paths?)
                 .build()
         }
-        "sharded" if matches.value_of("shard-type") == Some("single") => {
+        "sharded" => {
             let num_shards = matches.value_of("num-shards").unwrap_or("1").parse()?;
             let replica_set_shards = matches
                 .value_of("shard-type")
                 .map(|shard_type| shard_type == "replset")
                 .unwrap_or(true);
-            let paths: Result<Vec<_>> = (0..num_shards).map(|_| create_tempdir()).collect();
+            let num_servers = if replica_set_shards {
+                num_shards * 3
+            } else {
+                num_shards
+            };
+            let paths: Result<Vec<_>> = (0..num_servers).map(|_| create_tempdir()).collect();
 
             ClusterOptions::builder()
                 .topology(Topology::Sharded {
@@ -114,7 +119,7 @@ fn main() -> Result<()> {
                 .paths(paths?)
                 .build()
         }
-        _ => unimplemented!(),
+        _ => unreachable!(),
     };
 
     if matches.is_present("weak-tls") {
