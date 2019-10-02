@@ -62,6 +62,7 @@ fn main() -> Result<()> {
                 .requires_if("topology", "sharded")
                 .takes_value(true)
                 .possible_values(&["single", "replset"])
+                .default_value_if("topology", Some("sharded"), "replset")
         )
         .arg(
             Arg::with_name("weak-tls")

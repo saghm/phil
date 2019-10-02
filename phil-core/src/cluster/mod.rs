@@ -158,11 +158,11 @@ impl Cluster {
     ) -> Result<Self> {
         let monger = Monger::new()?;
         let mut paths = paths.into_iter();
-        let shard_ports = (0..num_shards).map(|i| 27107 + i as u16);
-        let config_port = 27017 + num_shards as u16 + 1;
-        let mongos_port1 = 27017 + num_shards as u16 + 2;
-        let mongos_port2 = 27017 + num_shards as u16 + 3;
+        let mongos_port1 = 27017;
+        let mongos_port2 = 27018;
+        let config_port = 27019;
 
+        let shard_ports = (0..num_shards).map(|i| 27020 + i as u16);
         for port in shard_ports.clone() {
             launch::single_server(&monger, port, paths.next(), tls_options.as_ref(), true)?;
         }
@@ -182,6 +182,7 @@ impl Cluster {
             config_port,
             "dummy-config-server",
             shard_ports.clone(),
+            tls_options.as_ref(),
         )?;
         launch::mongos(
             &monger,
@@ -189,6 +190,7 @@ impl Cluster {
             config_port,
             "dummy-config-server",
             shard_ports,
+            tls_options.as_ref(),
         )?;
 
         let hosts = vec![
@@ -196,7 +198,10 @@ impl Cluster {
             Host::new("localhost".into(), Some(mongos_port2)),
         ];
 
-        let client_options = ClientOptions::builder().hosts(hosts.clone()).build();
+        let client_options = ClientOptions::builder()
+            .hosts(hosts.clone())
+            .tls_options(tls_options.map(Into::into))
+            .build();
         let client = Client::with_options(client_options.clone())?;
 
         Ok(Self {

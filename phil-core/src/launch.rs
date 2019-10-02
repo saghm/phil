@@ -88,22 +88,23 @@ pub(crate) fn mongos(
     config_port: u16,
     config_name: &str,
     shard_ports: impl IntoIterator<Item = u16>,
+    tls_options: Option<&TlsOptions>,
 ) -> Result<Client> {
-    monger.command(
-        "mongos",
-        vec![
-            OsString::from("--port"),
-            OsString::from(port.to_string()),
-            OsString::from("--configdb"),
-            OsString::from(format!("{}/localhost:{}", config_name, config_port)),
-        ],
-        "4.2.0",
-        ChildType::Fork,
-    )?;
+    let mut args = vec![
+        OsString::from("--port"),
+        OsString::from(port.to_string()),
+        OsString::from("--configdb"),
+        OsString::from(format!("{}/localhost:{}", config_name, config_port)),
+    ];
+
+    add_tls_options(&mut args, tls_options);
+
+    monger.command("mongos", args, "4.2.0", ChildType::Fork)?;
 
     let client = Client::with_options(
         ClientOptions::builder()
             .hosts(vec![Host::new("localhost".into(), Some(port))])
+            .tls_options(tls_options.map(|opts| opts.clone().into()))
             .build(),
     )?;
 
