@@ -22,17 +22,3 @@ pub enum Error {
         inner: phil_core::error::Error,
     },
 }
-
-macro_rules! define_error_from {
-    ($ext:ty, $var:ident) => {
-        impl From<$ext> for Error {
-            fn from(err: $ext) -> Self {
-                Error::$var { inner: err }
-            }
-        }
-    };
-}
-
-define_error_from!(std::io::Error, Io);
-define_error_from!(std::num::ParseIntError, ParseInt);
-define_error_from!(phil_core::error::Error, Phil);
