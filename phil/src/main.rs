@@ -1,3 +1,4 @@
+mod display;
 mod error;
 
 use std::{
@@ -9,7 +10,7 @@ use clap::{crate_authors, crate_description, crate_version, App, AppSettings, Ar
 use phil_core::cluster::{Cluster, ClusterOptions, TlsOptions, Topology};
 use uuid::Uuid;
 
-use crate::error::Result;
+use crate::{display::ClientOptionsWrapper, error::Result};
 
 fn create_tempdir() -> Result<PathBuf> {
     let dir = std::env::temp_dir().join(format!("phil-mongodb-{}", Uuid::new_v4()));
@@ -36,7 +37,7 @@ fn main() -> Result<()> {
             Arg::with_name("ID")
                 .help("the ID of the database version managed by monger to use")
                 .required(true)
-                .index(2)
+                .index(2),
         )
         .arg(
             Arg::with_name("nodes")
@@ -59,7 +60,7 @@ fn main() -> Result<()> {
                 .help("the number of shards to start")
                 .long("num-shards")
                 .requires_if("topology", "sharded")
-                .takes_value(true)
+                .takes_value(true),
         )
         .arg(
             Arg::with_name("shard-type")
@@ -68,11 +69,14 @@ fn main() -> Result<()> {
                 .requires_if("topology", "sharded")
                 .takes_value(true)
                 .possible_values(&["single", "replset"])
-                .default_value_if("topology", Some("sharded"), "replset")
+                .default_value_if("topology", Some("sharded"), "replset"),
         )
         .arg(
             Arg::with_name("weak-tls")
-                .help("enable (and require) TLS for the cluster without verifying client certificates")
+                .help(
+                    "enable (and require) TLS for the cluster without verifying client \
+                     certificates",
+                )
                 .long("weak-tls")
                 .takes_value(false),
         )
@@ -81,14 +85,14 @@ fn main() -> Result<()> {
                 .help("the certificate authority file to use for TLS (defaults to ./ca.pem)")
                 .long("ca-file")
                 .takes_value(true)
-                .requires("weak-tls")
+                .requires("weak-tls"),
         )
         .arg(
             Arg::with_name("cert-file")
                 .help("the private key certificate file to use for TLS (defaults to ./server.pem)")
                 .long("cert-file")
                 .takes_value(true)
-                .requires("weak-tls")
+                .requires("weak-tls"),
         )
         .get_matches();
 
@@ -150,7 +154,10 @@ fn main() -> Result<()> {
 
     let cluster = Cluster::new(cluster_options)?;
 
-    println!("MONGODB_URI='{}'", cluster.client_options());
+    println!(
+        "MONGODB_URI='{}'",
+        ClientOptionsWrapper(cluster.client_options())
+    );
 
     Ok(())
 }

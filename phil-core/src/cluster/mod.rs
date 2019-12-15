@@ -3,10 +3,10 @@ mod test;
 
 use std::path::PathBuf;
 
+use bson::{bson, doc};
 use monger_core::Monger;
 use mongodb::{
-    bson::{bson, doc},
-    options::{ClientOptions, Host, TlsOptions as DriverTlsOptions},
+    options::{ClientOptions, StreamAddress, Tls, TlsOptions as DriverTlsOptions},
     Client,
 };
 use typed_builder::TypedBuilder;
@@ -34,7 +34,7 @@ pub struct Cluster {
     monger: Monger,
     client: Client,
     client_options: ClientOptions,
-    hosts: Vec<Host>,
+    hosts: Vec<StreamAddress>,
     topology: Topology,
     tls: Option<TlsOptions>,
 }
@@ -59,12 +59,13 @@ pub struct TlsOptions {
     pub cert_file_path: PathBuf,
 }
 
-impl From<TlsOptions> for DriverTlsOptions {
+impl From<TlsOptions> for Tls {
     fn from(opts: TlsOptions) -> Self {
-        Self::builder()
+        DriverTlsOptions::builder()
             .allow_invalid_certificates(opts.allow_invalid_certificates)
             .ca_file_path(opts.ca_file_path.to_string_lossy().into_owned())
             .build()
+            .into()
     }
 }
 
@@ -113,7 +114,7 @@ impl Cluster {
         path: Option<PathBuf>,
         tls_options: Option<TlsOptions>,
     ) -> Result<Self> {
-        let hosts = vec![Host::new("localhost".into(), Some(27017))];
+        let hosts = vec![launch::stream_address("localhost", 27017)];
         let monger = Monger::new()?;
 
         launch::single_server(
@@ -127,7 +128,7 @@ impl Cluster {
 
         let client_options = ClientOptions::builder()
             .hosts(hosts.clone())
-            .tls_options(tls_options.map(Into::into))
+            .tls(tls_options.map(Into::into))
             .build();
         let client = Client::with_options(client_options.clone())?;
 
@@ -149,7 +150,7 @@ impl Cluster {
         tls_options: Option<TlsOptions>,
     ) -> Result<Self> {
         let hosts: Vec<_> = (0..nodes)
-            .map(|i| Host::new("localhost".into(), Some(27017 + i as u16)))
+            .map(|i| launch::stream_address("localhost", 27017 + i as u16))
             .collect();
         let monger = Monger::new()?;
 
@@ -166,7 +167,7 @@ impl Cluster {
         let client_options = ClientOptions::builder()
             .hosts(hosts.clone())
             .repl_set_name(set_name.clone())
-            .tls_options(tls_options.map(Into::into))
+            .tls(tls_options.map(Into::into))
             .build();
 
         Ok(Self {
@@ -209,7 +210,7 @@ impl Cluster {
         launch::replica_set(
             &monger,
             &version_id,
-            vec![Host::new("localhost".into(), Some(config_port))],
+            vec![launch::stream_address("localhost", config_port)],
             "phil-config-server",
             std::iter::empty(),
             tls_options.as_ref(),
@@ -238,13 +239,13 @@ impl Cluster {
         )?;
 
         let hosts = vec![
-            Host::new("localhost".into(), Some(mongos_port1)),
-            Host::new("localhost".into(), Some(mongos_port2)),
+            launch::stream_address("localhost", mongos_port1),
+            launch::stream_address("localhost", mongos_port2),
         ];
 
         let client_options = ClientOptions::builder()
             .hosts(hosts.clone())
-            .tls_options(tls_options.map(Into::into))
+            .tls(tls_options.map(Into::into))
             .build();
         let client = Client::with_options(client_options.clone())?;
 
@@ -282,7 +283,7 @@ impl Cluster {
                 &monger,
                 &version_id,
                 (port..port + 3)
-                    .map(|p| Host::new("localhost".into(), Some(p)))
+                    .map(|p| launch::stream_address("localhost", p))
                     .collect(),
                 &shard_names[i],
                 &mut paths,
@@ -294,7 +295,7 @@ impl Cluster {
         launch::replica_set(
             &monger,
             &version_id,
-            vec![Host::new("localhost".into(), Some(config_port))],
+            vec![launch::stream_address("localhost", config_port)],
             "phil-config-server",
             std::iter::empty(),
             tls_options.as_ref(),
@@ -323,13 +324,13 @@ impl Cluster {
         )?;
 
         let hosts = vec![
-            Host::new("localhost".into(), Some(mongos_port1)),
-            Host::new("localhost".into(), Some(mongos_port2)),
+            launch::stream_address("localhost", mongos_port1),
+            launch::stream_address("localhost", mongos_port2),
         ];
 
         let client_options = ClientOptions::builder()
             .hosts(hosts.clone())
-            .tls_options(tls_options.map(Into::into))
+            .tls(tls_options.map(Into::into))
             .build();
         let client = Client::with_options(client_options.clone())?;
 

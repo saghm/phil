@@ -1,4 +1,4 @@
-use mongodb::bson::{bson, doc, Bson};
+use bson::{bson, doc, Bson};
 use serde::Deserialize;
 use tempdir::TempDir;
 use uuid::Uuid;
@@ -53,6 +53,7 @@ fn create_and_initiate_repl_set() {
             nodes: 3,
             set_name: "test-repl-set".into(),
         })
+        .version_id("4.2")
         .paths(
             db_dirs
                 .iter()
@@ -69,7 +70,7 @@ fn create_and_initiate_repl_set() {
         .run_command(doc! { "replSetGetStatus" : 1 }, None)
         .unwrap();
 
-    let ReplSetStatus { set } = mongodb::bson::from_bson(Bson::Document(response)).unwrap();
+    let ReplSetStatus { set } = bson::from_bson(Bson::Document(response)).unwrap();
 
     assert_eq!(set, "test-repl-set");
 }

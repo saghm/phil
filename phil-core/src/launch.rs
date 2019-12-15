@@ -1,10 +1,9 @@
 use std::{ffi::OsString, path::PathBuf, time::Duration};
 
+use bson::{bson, doc, Bson, Document};
 use monger_core::{process::ChildType, Monger};
 use mongodb::{
-    bson::{bson, doc, Bson, Document},
-    options::{ClientOptions, Host},
-    read_preference::ReadPreference,
+    options::{ClientOptions, StreamAddress, Tls},
     Client,
 };
 use serde::Deserialize;
@@ -13,6 +12,13 @@ use crate::{
     cluster::TlsOptions,
     error::{Error, Result},
 };
+
+pub(crate) fn stream_address(host: &str, port: u16) -> StreamAddress {
+    StreamAddress {
+        hostname: host.into(),
+        port: port.into(),
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum ServerShardType {
@@ -57,20 +63,14 @@ fn add_tls_options(args: &mut Vec<OsString>, tls_options: Option<&TlsOptions>) {
 
 fn configure_repl_set(client: &Client, config: Document) -> Result<()> {
     let db = client.database("admin");
-    let read_pref = Some(ReadPreference::Nearest {
-        tag_sets: None,
-        max_staleness: None,
-    });
-
     let response = db.run_command(
         doc! {
             "replSetInitiate": config.clone(),
         },
-        read_pref.clone(),
+        None,
     )?;
 
-    let CommandResponse { ok, code_name } =
-        mongodb::bson::from_bson(Bson::Document(response.clone()))?;
+    let CommandResponse { ok, code_name } = bson::from_bson(Bson::Document(response.clone()))?;
 
     if ok == 1.0 {
         return Ok(());
@@ -86,14 +86,14 @@ fn configure_repl_set(client: &Client, config: Document) -> Result<()> {
         doc! {
             "replSetReconfig": config,
         },
-        read_pref.clone(),
+        None,
     )?;
 
     loop {
         std::thread::sleep(Duration::from_millis(500));
 
-        let response = db.run_command(doc! { "replSetGetStatus": 1 }, read_pref.clone())?;
-        let ReplSetStatus { members } = mongodb::bson::from_bson(Bson::Document(response))?;
+        let response = db.run_command(doc! { "replSetGetStatus": 1 }, None)?;
+        let ReplSetStatus { members } = bson::from_bson(Bson::Document(response))?;
         if members.iter().any(|member| member.state_str == "PRIMARY") {
             return Ok(());
         }
@@ -121,12 +121,19 @@ pub(crate) fn mongos(
 
     monger.command("mongos", args, version_id, ChildType::Fork)?;
 
-    let client = Client::with_options(
-        ClientOptions::builder()
-            .hosts(vec![Host::new("localhost".into(), Some(port))])
-            .tls_options(tls_options.map(|opts| opts.clone().into()))
-            .build(),
-    )?;
+    // In practice, the client starts up way faster than the server, so sleep for a short while to
+    // ensure that the server has time to start up.
+    std::thread::sleep(Duration::from_millis(1500));
+
+    let mut options = ClientOptions::builder()
+        .hosts(vec![stream_address("localhost".into(), port)])
+        .build();
+
+    if let Some(tls_options) = tls_options {
+        options.tls = Some(Tls::from(tls_options.clone()));
+    }
+
+    let client = Client::with_options(options)?;
 
     let mut shard_names = shard_names.map(IntoIterator::into_iter);
 
@@ -140,8 +147,7 @@ pub(crate) fn mongos(
             .database("admin")
             .run_command(doc! { "addShard": shard_name }, None)?;
 
-        let CommandResponse { ok, .. } =
-            mongodb::bson::from_bson(Bson::Document(response.clone()))?;
+        let CommandResponse { ok, .. } = bson::from_bson(Bson::Document(response.clone()))?;
 
         if ok != 1.0 {
             return Err(Error::AddShardError { response });
@@ -173,13 +179,17 @@ pub(crate) fn single_server(
     add_tls_options(&mut args, tls_options);
     monger.start_mongod(args, version_id, ChildType::Fork)?;
 
+    // In practice, the client starts up way faster than the server, so sleep for a short while to
+    // ensure that the server has time to start up.
+    std::thread::sleep(Duration::from_millis(1500));
+
     Ok(())
 }
 
 pub(crate) fn replica_set(
     monger: &Monger,
     version_id: &str,
-    hosts: Vec<Host>,
+    hosts: Vec<StreamAddress>,
     set_name: &str,
     mut paths: impl Iterator<Item = PathBuf>,
     tls_options: Option<&TlsOptions>,
@@ -208,6 +218,10 @@ pub(crate) fn replica_set(
         monger.start_mongod(args, version_id, ChildType::Fork)?;
     }
 
+    // In practice, the client starts up way faster than the server, so sleep for a short while to
+    // ensure that the server has time to start up.
+    std::thread::sleep(Duration::from_millis(1500));
+
     let config = doc! {
         "_id": set_name.clone(),
         "members": hosts.iter().enumerate().map(|(i, host)| {
@@ -220,15 +234,24 @@ pub(crate) fn replica_set(
         }).collect::<Vec<_>>()
     };
 
-    let client = Client::with_options(
-        ClientOptions::builder()
-            .hosts(hosts)
-            .repl_set_name(set_name.to_string())
-            .tls_options(tls_options.map(|opts| opts.clone().into()))
-            .build(),
-    )?;
+    let mut options = ClientOptions::builder()
+        .hosts(hosts)
+        .repl_set_name(set_name.to_string())
+        .build();
 
-    configure_repl_set(&client, config)?;
+    if let Some(tls_options) = tls_options {
+        options.tls = Some(Tls::from(tls_options.clone()));
+    }
+
+    let mut direct_options = options.clone();
+    direct_options.hosts.split_off(1);
+    direct_options.direct_connection = Some(true);
+    direct_options.repl_set_name.take();
+    let direct_client = Client::with_options(direct_options)?;
+
+    configure_repl_set(&direct_client, config)?;
+
+    let client = Client::with_options(options)?;
 
     Ok(client)
 }

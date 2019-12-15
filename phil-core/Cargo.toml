@@ -5,23 +5,20 @@ authors = ["Saghm Rossi <saghmrossi@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-err-derive = "0.2.0"
-typed-builder = "0.3.0"
-percent-encoding = "2.1.0"
+bson = "0.14.0"
+err-derive = "0.2.1"
 monger-core = "0.9.0"
-
-[dependencies.mongodb]
-#path = "/home/saghm/code/mongo/rust/driver"
-git = "file:///home/saghm/code/mongo/rust/driver"
-branch = "foo"
+mongodb = "0.9.0"
+percent-encoding = "2.1.0"
+typed-builder = "0.4.0"
 
 [dependencies.serde]
-version = "1.0.101"
+version = "1.0.104"
 features = ["derive"]
 
 [dev-dependencies]
 tempdir = "0.3.7"
 
 [dev-dependencies.uuid]
-version = "0.7.4"
+version = "0.8.1"
 features = [ "v4" ]
