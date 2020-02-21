@@ -54,9 +54,11 @@ pub struct ClusterOptions {
 
 #[derive(Debug, Clone)]
 pub struct TlsOptions {
+    pub weak_tls: bool,
     pub allow_invalid_certificates: bool,
     pub ca_file_path: PathBuf,
-    pub cert_file_path: PathBuf,
+    pub server_cert_file_path: PathBuf,
+    pub client_cert_file_path: PathBuf,
 }
 
 impl From<TlsOptions> for Tls {
@@ -64,6 +66,7 @@ impl From<TlsOptions> for Tls {
         DriverTlsOptions::builder()
             .allow_invalid_certificates(opts.allow_invalid_certificates)
             .ca_file_path(opts.ca_file_path.to_string_lossy().into_owned())
+            .cert_key_file_path(opts.server_cert_file_path.to_string_lossy().into_owned())
             .build()
             .into()
     }

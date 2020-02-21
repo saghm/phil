@@ -55,9 +55,12 @@ fn add_tls_options(args: &mut Vec<OsString>, tls_options: Option<&TlsOptions>) {
             OsString::from("--tlsCAFile"),
             OsString::from(&tls_options.ca_file_path),
             OsString::from("--tlsCertificateKeyFile"),
-            OsString::from(&tls_options.cert_file_path),
-            OsString::from("--tlsAllowConnectionsWithoutCertificates"),
+            OsString::from(&tls_options.server_cert_file_path),
         ]);
+
+        if tls_options.weak_tls {
+            args.push(OsString::from("--tlsAllowConnectionsWithoutCertificates"));
+        }
     }
 }
 

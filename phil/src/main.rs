@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use clap::{crate_authors, crate_description, crate_version, App, AppSettings, Arg};
+use clap::{crate_authors, crate_description, crate_version, App, AppSettings, Arg, ArgGroup};
 use phil_core::cluster::{Cluster, ClusterOptions, TlsOptions, Topology};
 use uuid::Uuid;
 
@@ -71,6 +71,7 @@ fn main() -> Result<()> {
                 .possible_values(&["single", "replset"])
                 .default_value_if("topology", Some("sharded"), "replset"),
         )
+        .group(ArgGroup::with_name("tls-option").arg("weak-tls").arg("tls"))
         .arg(
             Arg::with_name("weak-tls")
                 .help(
@@ -81,18 +82,38 @@ fn main() -> Result<()> {
                 .takes_value(false),
         )
         .arg(
+            Arg::with_name("tls")
+                .help("enable (and require) TLS for the cluster")
+                .long("tls")
+                .takes_value(false)
+                .conflicts_with("weak-tls"),
+        )
+        .arg(
             Arg::with_name("ca-file")
                 .help("the certificate authority file to use for TLS (defaults to ./ca.pem)")
                 .long("ca-file")
                 .takes_value(true)
-                .requires("weak-tls"),
+                .requires("tls-option"),
         )
         .arg(
-            Arg::with_name("cert-file")
-                .help("the private key certificate file to use for TLS (defaults to ./server.pem)")
-                .long("cert-file")
+            Arg::with_name("server-cert-file")
+                .help(
+                    "the server private key certificate file to use for TLS (defaults to \
+                     ./server.pem)",
+                )
+                .long("server-cert-file")
                 .takes_value(true)
-                .requires("weak-tls"),
+                .requires("tls-option"),
+        )
+        .arg(
+            Arg::with_name("client-cert-file")
+                .help(
+                    "the client private key certificate file to use for TLS (needed to initialize \
+                     the cluster when client certificates are required); defaults to ./client.pem)",
+                )
+                .long("client-cert-file")
+                .takes_value(true)
+                .requires("tls"),
         )
         .get_matches();
 
@@ -139,16 +160,24 @@ fn main() -> Result<()> {
         _ => unreachable!(),
     };
 
-    if matches.is_present("weak-tls") {
+    if matches.is_present("weak-tls") || matches.is_present("tls") {
         let ca_file_path =
             Path::new(matches.value_of("ca-file").unwrap_or("./ca.pem")).canonicalize()?;
-        let cert_file_path =
+        let server_cert_file_path =
             Path::new(matches.value_of("cert-file").unwrap_or("./server.pem")).canonicalize()?;
+        let client_cert_file_path = Path::new(
+            matches
+                .value_of("client-cert-file")
+                .unwrap_or("./client.pem"),
+        )
+        .canonicalize()?;
 
         cluster_options.tls = Some(TlsOptions {
+            weak_tls: matches.is_present("weak-tls"),
             allow_invalid_certificates: true,
             ca_file_path,
-            cert_file_path,
+            server_cert_file_path,
+            client_cert_file_path,
         });
     }
 
