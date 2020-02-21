@@ -1,24 +1,24 @@
-use err_derive::Error;
+use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error(display = "{}", inner)]
+    #[error("{inner}")]
     Io {
-        #[error(cause)]
+        #[from]
         inner: std::io::Error,
     },
 
-    #[error(display = "{}", inner)]
+    #[error("{inner}")]
     ParseInt {
-        #[error(cause)]
+        #[from]
         inner: std::num::ParseIntError,
     },
 
-    #[error(display = "{}", inner)]
+    #[error("{inner}")]
     Phil {
-        #[error(cause)]
+        #[from]
         inner: phil_core::error::Error,
     },
 }

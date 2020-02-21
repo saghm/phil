@@ -1,31 +1,31 @@
 use bson::Document;
-use err_derive::Error;
+use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error(display = "error when adding shard: {}", response)]
+    #[error("error when adding shard: {response}")]
     AddShardError { response: Document },
 
-    #[error(display = "{}", inner)]
+    #[error("{inner}")]
     BsonDecoder {
-        #[error(cause)]
+        #[from]
         inner: bson::DecoderError,
     },
 
-    #[error(display = "{}", inner)]
+    #[error("{inner}")]
     Monger {
-        #[error(cause)]
+        #[from]
         inner: monger_core::error::Error,
     },
 
-    #[error(display = "{}", inner)]
+    #[error("{inner}")]
     Mongo {
-        #[error(cause)]
+        #[from]
         inner: mongodb::error::Error,
     },
 
-    #[error(display = "error when configuring replica set: {}", response)]
+    #[error("error when configuring replica set: {response}")]
     ReplicaSetConfigError { response: Document },
 }

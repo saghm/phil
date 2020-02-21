@@ -6,11 +6,11 @@ edition = "2018"
 
 [dependencies]
 bson = "0.14.0"
-err-derive = "0.2.1"
 monger-core = "0.9.0"
-mongodb = "0.9.0"
+mongodb = "0.9.1"
 percent-encoding = "2.1.0"
-typed-builder = "0.4.0"
+typed-builder = "0.5.1"
+thiserror = "1.0.11"
 
 [dependencies.serde]
 version = "1.0.104"
