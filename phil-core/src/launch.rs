@@ -3,7 +3,7 @@ use std::{ffi::OsString, path::PathBuf, time::Duration};
 use bson::{bson, doc, Bson, Document};
 use monger_core::{process::ChildType, Monger};
 use mongodb::{
-    options::{ClientOptions, StreamAddress, Tls},
+    options::{auth::Credential, ClientOptions, StreamAddress, Tls},
     Client,
 };
 use serde::Deserialize;
@@ -112,6 +112,7 @@ pub(crate) fn mongos(
     shard_ports: impl IntoIterator<Item = u16>,
     tls_options: Option<&TlsOptions>,
     shard_names: Option<Vec<String>>,
+    auth: Option<Credential>,
 ) -> Result<Client> {
     let mut args = vec![
         OsString::from("--port"),
@@ -122,6 +123,10 @@ pub(crate) fn mongos(
 
     add_tls_options(&mut args, tls_options);
 
+    if auth.is_some() {
+        args.push(OsString::from("--auth"));
+    }
+
     monger.command("mongos", args, version_id, ChildType::Fork)?;
 
     // In practice, the client starts up way faster than the server, so sleep for a short while to
@@ -130,6 +135,7 @@ pub(crate) fn mongos(
 
     let mut options = ClientOptions::builder()
         .hosts(vec![stream_address("localhost".into(), port)])
+        .credential(auth)
         .build();
 
     if let Some(tls_options) = tls_options {
@@ -167,6 +173,7 @@ pub(crate) fn single_server(
     path: Option<PathBuf>,
     tls_options: Option<&TlsOptions>,
     shard_server: bool,
+    auth: bool,
 ) -> Result<()> {
     let mut args: Vec<_> = vec![OsString::from("--port"), OsString::from(port.to_string())];
 
@@ -177,6 +184,10 @@ pub(crate) fn single_server(
 
     if shard_server {
         args.push(OsString::from("--shardsvr"));
+    }
+
+    if auth {
+        args.push(OsString::from("--auth"));
     }
 
     add_tls_options(&mut args, tls_options);
@@ -197,6 +208,7 @@ pub(crate) fn replica_set(
     mut paths: impl Iterator<Item = PathBuf>,
     tls_options: Option<&TlsOptions>,
     server_shard_type: ServerShardType,
+    auth: Option<Credential>,
 ) -> Result<Client> {
     for host in &hosts {
         let mut args = vec![
@@ -216,6 +228,10 @@ pub(crate) fn replica_set(
             ServerShardType::Shard => args.push(OsString::from("--shardsvr")),
             ServerShardType::None => {}
         };
+
+        if auth.is_some() {
+            args.push(OsString::from("--auth"));
+        }
 
         add_tls_options(&mut args, tls_options);
         monger.start_mongod(args, version_id, ChildType::Fork)?;
@@ -240,6 +256,7 @@ pub(crate) fn replica_set(
     let mut options = ClientOptions::builder()
         .hosts(hosts)
         .repl_set_name(set_name.to_string())
+        .credential(auth)
         .build();
 
     if let Some(tls_options) = tls_options {

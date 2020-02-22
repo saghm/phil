@@ -1,12 +1,18 @@
 #[cfg(test)]
 mod test;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, process::Command, time::Duration};
 
 use bson::{bson, doc};
 use monger_core::Monger;
 use mongodb::{
-    options::{ClientOptions, StreamAddress, Tls, TlsOptions as DriverTlsOptions},
+    options::{
+        auth::Credential as DriverCredential,
+        ClientOptions,
+        StreamAddress,
+        Tls,
+        TlsOptions as DriverTlsOptions,
+    },
     Client,
 };
 use typed_builder::TypedBuilder;
@@ -39,7 +45,7 @@ pub struct Cluster {
     tls: Option<TlsOptions>,
 }
 
-#[derive(Debug, TypedBuilder)]
+#[derive(Clone, Debug, TypedBuilder)]
 pub struct ClusterOptions {
     pub topology: Topology,
 
@@ -50,6 +56,9 @@ pub struct ClusterOptions {
 
     #[builder(default)]
     pub tls: Option<TlsOptions>,
+
+    #[builder(default)]
+    pub auth: Option<Credential>,
 }
 
 #[derive(Debug, Clone)]
@@ -72,13 +81,58 @@ impl From<TlsOptions> for Tls {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Credential {
+    pub username: String,
+    pub password: String,
+}
+
+impl From<Credential> for DriverCredential {
+    fn from(credential: Credential) -> Self {
+        Self::builder()
+            .username(credential.username)
+            .password(credential.password)
+            .build()
+    }
+}
+
 impl Cluster {
-    pub fn new(options: ClusterOptions) -> Result<Self> {
+    pub fn new(mut options: ClusterOptions) -> Result<Self> {
+        let credential = match options.auth.take() {
+            Some(credential) => credential,
+            None => return Self::initialize(options),
+        };
+
+        // Start cluster without auth.
+        let cluster = Self::initialize(options.clone())?;
+
+        // Add user to cluster.
+        cluster.client.database("admin").run_command(
+            doc! {
+                "createUser": credential.username.clone(),
+                "pwd": credential.password.clone(),
+                "roles": ["dbAdmin"]
+            },
+            None,
+        )?;
+
+        // Shut down cluster.
+        Command::new("killall")
+            .args(&["-w", "mongod", "mongos"])
+            .output()?;
+
+        // Start up the cluster again with auth.
+        options.auth = Some(credential);
+        Self::initialize(options)
+    }
+
+    fn initialize(options: ClusterOptions) -> Result<Self> {
         match options.topology {
             Topology::Single => Self::start_single_server(
                 options.version_id,
                 options.paths.into_iter().next(),
                 options.tls,
+                options.auth.is_some(),
             ),
             Topology::ReplicaSet { nodes, set_name } => Self::start_replica_set(
                 options.version_id,
@@ -86,6 +140,7 @@ impl Cluster {
                 set_name,
                 options.paths,
                 options.tls,
+                options.auth,
             ),
             Topology::Sharded {
                 num_shards,
@@ -95,6 +150,7 @@ impl Cluster {
                 num_shards,
                 options.paths,
                 options.tls,
+                options.auth,
             ),
             Topology::Sharded {
                 num_shards,
@@ -104,6 +160,7 @@ impl Cluster {
                 num_shards,
                 options.paths,
                 options.tls,
+                options.auth,
             ),
         }
     }
@@ -116,6 +173,7 @@ impl Cluster {
         version_id: String,
         path: Option<PathBuf>,
         tls_options: Option<TlsOptions>,
+        auth: bool,
     ) -> Result<Self> {
         let hosts = vec![launch::stream_address("localhost", 27017)];
         let monger = Monger::new()?;
@@ -127,6 +185,7 @@ impl Cluster {
             path,
             tls_options.as_ref(),
             false,
+            auth,
         )?;
 
         let client_options = ClientOptions::builder()
@@ -151,7 +210,10 @@ impl Cluster {
         set_name: String,
         paths: Vec<PathBuf>,
         tls_options: Option<TlsOptions>,
+        auth: Option<Credential>,
     ) -> Result<Self> {
+        let auth = auth.map(Into::into);
+
         let hosts: Vec<_> = (0..nodes)
             .map(|i| launch::stream_address("localhost", 27017 + i as u16))
             .collect();
@@ -165,12 +227,14 @@ impl Cluster {
             paths.into_iter(),
             tls_options.as_ref(),
             ServerShardType::None,
+            auth.clone(),
         )?;
 
         let client_options = ClientOptions::builder()
             .hosts(hosts.clone())
             .repl_set_name(set_name.clone())
             .tls(tls_options.map(Into::into))
+            .credential(auth)
             .build();
 
         Ok(Self {
@@ -191,7 +255,10 @@ impl Cluster {
         num_shards: u8,
         paths: Vec<PathBuf>,
         tls_options: Option<TlsOptions>,
+        auth: Option<Credential>,
     ) -> Result<Self> {
+        let auth = auth.map(Into::into);
+
         let monger = Monger::new()?;
         let mut paths = paths.into_iter();
         let mongos_port1 = 27017;
@@ -207,6 +274,7 @@ impl Cluster {
                 paths.next(),
                 tls_options.as_ref(),
                 true,
+                auth.is_some(),
             )?;
         }
 
@@ -218,6 +286,7 @@ impl Cluster {
             std::iter::empty(),
             tls_options.as_ref(),
             ServerShardType::Config,
+            auth.clone(),
         )?;
 
         launch::mongos(
@@ -229,6 +298,7 @@ impl Cluster {
             shard_ports.clone(),
             tls_options.as_ref(),
             None,
+            auth.clone(),
         )?;
         launch::mongos(
             &monger,
@@ -239,6 +309,7 @@ impl Cluster {
             shard_ports,
             tls_options.as_ref(),
             None,
+            auth.clone(),
         )?;
 
         let hosts = vec![
@@ -249,6 +320,7 @@ impl Cluster {
         let client_options = ClientOptions::builder()
             .hosts(hosts.clone())
             .tls(tls_options.map(Into::into))
+            .credential(auth.clone())
             .build();
         let client = Client::with_options(client_options.clone())?;
 
@@ -270,7 +342,10 @@ impl Cluster {
         num_shards: u8,
         paths: Vec<PathBuf>,
         tls_options: Option<TlsOptions>,
+        auth: Option<Credential>,
     ) -> Result<Self> {
+        let auth = auth.map(Into::into);
+
         let monger = Monger::new()?;
         let mut paths = paths.into_iter();
         let mongos_port1 = 27017;
@@ -292,6 +367,7 @@ impl Cluster {
                 &mut paths,
                 tls_options.as_ref(),
                 ServerShardType::Shard,
+                auth.clone(),
             )?;
         }
 
@@ -303,6 +379,7 @@ impl Cluster {
             std::iter::empty(),
             tls_options.as_ref(),
             ServerShardType::Config,
+            auth.clone(),
         )?;
 
         launch::mongos(
@@ -314,6 +391,7 @@ impl Cluster {
             shard_ports.clone(),
             tls_options.as_ref(),
             Some(shard_names.clone()),
+            auth.clone(),
         )?;
         launch::mongos(
             &monger,
@@ -324,6 +402,7 @@ impl Cluster {
             shard_ports,
             tls_options.as_ref(),
             Some(shard_names),
+            auth.clone(),
         )?;
 
         let hosts = vec![
@@ -334,6 +413,7 @@ impl Cluster {
         let client_options = ClientOptions::builder()
             .hosts(hosts.clone())
             .tls(tls_options.map(Into::into))
+            .credential(auth.clone())
             .build();
         let client = Client::with_options(client_options.clone())?;
 

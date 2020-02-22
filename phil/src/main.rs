@@ -7,7 +7,7 @@ use std::{
 };
 
 use clap::{crate_authors, crate_description, crate_version, App, AppSettings, Arg, ArgGroup};
-use phil_core::cluster::{Cluster, ClusterOptions, TlsOptions, Topology};
+use phil_core::cluster::{Cluster, ClusterOptions, Credential, TlsOptions, Topology};
 use uuid::Uuid;
 
 use crate::{display::ClientOptionsWrapper, error::Result};
@@ -70,6 +70,12 @@ fn main() -> Result<()> {
                 .takes_value(true)
                 .possible_values(&["single", "replset"])
                 .default_value_if("topology", Some("sharded"), "replset"),
+        )
+        .arg(
+            Arg::with_name("auth")
+                .help("enables authentication for the cluster")
+                .long("auth")
+                .takes_value(false),
         )
         .group(ArgGroup::with_name("tls-option").arg("weak-tls").arg("tls"))
         .arg(
@@ -178,6 +184,13 @@ fn main() -> Result<()> {
             ca_file_path,
             server_cert_file_path,
             client_cert_file_path,
+        });
+    }
+
+    if matches.is_present("auth") {
+        cluster_options.auth = Some(Credential {
+            username: "phil".into(),
+            password: "ravi".into(),
         });
     }
 

@@ -15,6 +15,12 @@ pub enum Error {
     },
 
     #[error("{inner}")]
+    Io {
+        #[from]
+        inner: std::io::Error,
+    },
+
+    #[error("{inner}")]
     Monger {
         #[from]
         inner: monger_core::error::Error,
