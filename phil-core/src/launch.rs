@@ -1,7 +1,7 @@
-use std::{ffi::OsString, path::PathBuf, time::Duration};
+use std::{ffi::OsString, path::PathBuf, process::Child, time::Duration};
 
 use bson::{bson, doc, Bson, Document};
-use monger_core::{process::ChildType, Monger};
+use monger_core::Monger;
 use mongodb::{
     options::{auth::Credential, ClientOptions, StreamAddress, Tls},
     Client,
@@ -105,6 +105,7 @@ fn configure_repl_set(client: &Client, config: Document) -> Result<()> {
 
 pub(crate) fn mongos(
     monger: &Monger,
+    processes: &mut Vec<Child>,
     version_id: &str,
     port: u16,
     config_port: u16,
@@ -127,7 +128,7 @@ pub(crate) fn mongos(
         args.push(OsString::from("--auth"));
     }
 
-    monger.command("mongos", args, version_id, ChildType::Fork)?;
+    processes.push(monger.run_background_command("mongos", args, version_id)?);
 
     // In practice, the client starts up way faster than the server, so sleep for a short while to
     // ensure that the server has time to start up.
@@ -174,7 +175,7 @@ pub(crate) fn single_server(
     tls_options: Option<&TlsOptions>,
     shard_server: bool,
     auth: bool,
-) -> Result<()> {
+) -> Result<Child> {
     let mut args: Vec<_> = vec![OsString::from("--port"), OsString::from(port.to_string())];
 
     if let Some(path) = path {
@@ -191,17 +192,18 @@ pub(crate) fn single_server(
     }
 
     add_tls_options(&mut args, tls_options);
-    monger.start_mongod(args, version_id, ChildType::Fork)?;
+    let child = monger.start_mongod(args, version_id, false)?;
 
     // In practice, the client starts up way faster than the server, so sleep for a short while to
     // ensure that the server has time to start up.
     std::thread::sleep(Duration::from_millis(1500));
 
-    Ok(())
+    Ok(child)
 }
 
 pub(crate) fn replica_set(
     monger: &Monger,
+    processes: &mut Vec<Child>,
     version_id: &str,
     hosts: Vec<StreamAddress>,
     set_name: &str,
@@ -234,7 +236,7 @@ pub(crate) fn replica_set(
         }
 
         add_tls_options(&mut args, tls_options);
-        monger.start_mongod(args, version_id, ChildType::Fork)?;
+        processes.push(monger.start_mongod(args, version_id, false)?);
     }
 
     // In practice, the client starts up way faster than the server, so sleep for a short while to

@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod test;
 
-use std::{path::PathBuf, process::Command, time::Duration};
+use std::{
+    path::PathBuf,
+    process::{Child, Command},
+};
 
 use bson::{bson, doc};
 use monger_core::Monger;
@@ -43,6 +46,7 @@ pub struct Cluster {
     hosts: Vec<StreamAddress>,
     topology: Topology,
     tls: Option<TlsOptions>,
+    processes: Vec<Child>,
 }
 
 #[derive(Clone, Debug, TypedBuilder)]
@@ -116,10 +120,8 @@ impl Cluster {
             None,
         )?;
 
-        // Shut down cluster.
-        Command::new("killall")
-            .args(&["-w", "mongod", "mongos"])
-            .output()?;
+        // Shut down the cluster.
+        cluster.shutdown()?;
 
         // Start up the cluster again with auth.
         options.auth = Some(credential);
@@ -178,7 +180,7 @@ impl Cluster {
         let hosts = vec![launch::stream_address("localhost", 27017)];
         let monger = Monger::new()?;
 
-        launch::single_server(
+        let child = launch::single_server(
             &monger,
             &version_id,
             27017,
@@ -201,6 +203,7 @@ impl Cluster {
             hosts,
             topology: Topology::Single,
             tls: None,
+            processes: vec![child],
         })
     }
 
@@ -219,8 +222,11 @@ impl Cluster {
             .collect();
         let monger = Monger::new()?;
 
+        let mut processes = Vec::new();
+
         let client = launch::replica_set(
             &monger,
+            &mut processes,
             &version_id,
             hosts.clone(),
             &set_name,
@@ -247,6 +253,7 @@ impl Cluster {
             client_options,
             hosts,
             tls: None,
+            processes,
         })
     }
 
@@ -260,6 +267,7 @@ impl Cluster {
         let auth = auth.map(Into::into);
 
         let monger = Monger::new()?;
+        let mut processes = Vec::new();
         let mut paths = paths.into_iter();
         let mongos_port1 = 27017;
         let mongos_port2 = 27018;
@@ -267,19 +275,22 @@ impl Cluster {
 
         let shard_ports = (0..num_shards).map(|i| 27020 + i as u16);
         for port in shard_ports.clone() {
-            launch::single_server(
+            let process = launch::single_server(
                 &monger,
-                &version_id,
+                &mut &version_id,
                 port,
                 paths.next(),
                 tls_options.as_ref(),
                 true,
                 auth.is_some(),
             )?;
+
+            processes.push(process);
         }
 
         launch::replica_set(
             &monger,
+            &mut processes,
             &version_id,
             vec![launch::stream_address("localhost", config_port)],
             "phil-config-server",
@@ -291,6 +302,7 @@ impl Cluster {
 
         launch::mongos(
             &monger,
+            &mut processes,
             &version_id,
             mongos_port1,
             config_port,
@@ -302,6 +314,7 @@ impl Cluster {
         )?;
         launch::mongos(
             &monger,
+            &mut processes,
             &version_id,
             mongos_port2,
             config_port,
@@ -334,6 +347,7 @@ impl Cluster {
             client,
             client_options,
             tls: None,
+            processes,
         })
     }
 
@@ -347,6 +361,7 @@ impl Cluster {
         let auth = auth.map(Into::into);
 
         let monger = Monger::new()?;
+        let mut processes = Vec::new();
         let mut paths = paths.into_iter();
         let mongos_port1 = 27017;
         let mongos_port2 = 27018;
@@ -359,6 +374,7 @@ impl Cluster {
         for (i, port) in shard_ports.clone().enumerate() {
             launch::replica_set(
                 &monger,
+                &mut processes,
                 &version_id,
                 (port..port + 3)
                     .map(|p| launch::stream_address("localhost", p))
@@ -373,6 +389,7 @@ impl Cluster {
 
         launch::replica_set(
             &monger,
+            &mut processes,
             &version_id,
             vec![launch::stream_address("localhost", config_port)],
             "phil-config-server",
@@ -384,6 +401,7 @@ impl Cluster {
 
         launch::mongos(
             &monger,
+            &mut processes,
             &version_id,
             mongos_port1,
             config_port,
@@ -393,8 +411,10 @@ impl Cluster {
             Some(shard_names.clone()),
             auth.clone(),
         )?;
+
         launch::mongos(
             &monger,
+            &mut processes,
             &version_id,
             mongos_port2,
             config_port,
@@ -427,13 +447,18 @@ impl Cluster {
             client,
             client_options,
             tls: None,
+            processes,
         })
     }
 
-    pub fn shutdown(self) {
-        let _ = self
-            .client
-            .database("admin")
-            .run_command(doc! { "shutdown": 1 }, None);
+    pub fn shutdown(self) -> Result<()> {
+        for mut process in self.processes {
+            Command::new("kill")
+                .args(&[process.id().to_string()])
+                .output()?;
+            process.wait()?;
+        }
+
+        Ok(())
     }
 }

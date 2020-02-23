@@ -6,7 +6,8 @@ edition = "2018"
 
 [dependencies]
 bson = "0.14.0"
-monger-core = "0.9.0"
+#monger-core = "0.9.0"
+monger-core = { path = "/home/saghm/code/projects/monger/monger-core" }
 mongodb = "0.9.1"
 percent-encoding = "2.1.0"
 typed-builder = "0.5.1"
