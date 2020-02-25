@@ -66,40 +66,60 @@ fn add_tls_options(args: &mut Vec<OsString>, tls_options: Option<&TlsOptions>) {
 
 fn configure_repl_set(client: &Client, config: Document) -> Result<()> {
     let db = client.database("admin");
-    let response = db.run_command(
-        doc! {
-            "replSetInitiate": config.clone(),
-        },
-        None,
-    )?;
+    let mut cmd = doc! {
+        "replSetInitiate": config.clone(),
+    };
+    let mut already_initialized = false;
 
-    let CommandResponse { ok, code_name } = bson::from_bson(Bson::Document(response.clone()))?;
+    loop {
+        let response = db.run_command(cmd.clone(), None);
 
-    if ok == 1.0 {
-        return Ok(());
-    }
+        let response = match response {
+            Ok(response) => response,
+            Err(..) => {
+                std::thread::sleep(Duration::from_millis(250));
 
-    if let Some(code_name) = code_name {
-        if code_name != "AlreadyInitialized" {
-            return Err(Error::ReplicaSetConfigError { response });
+                continue;
+            }
+        };
+
+        let CommandResponse { ok, code_name } = bson::from_bson(Bson::Document(response.clone()))?;
+
+        if ok == 1.0 {
+            break;
+        }
+
+        if let Some(code_name) = code_name {
+            if code_name == "AlreadyInitialized" {
+                if !already_initialized {
+                    cmd = doc! {
+                        "replSetReconfig": config.clone(),
+                    };
+                }
+
+                already_initialized = true;
+            }
         }
     }
 
-    db.run_command(
-        doc! {
-            "replSetReconfig": config,
-        },
-        None,
-    )?;
-
     loop {
-        std::thread::sleep(Duration::from_millis(500));
+        let response = db.run_command(doc! { "replSetGetStatus": 1 }, None);
+        let response = match response {
+            Ok(response) => response,
+            Err(..) => {
+                std::thread::sleep(Duration::from_millis(250));
 
-        let response = db.run_command(doc! { "replSetGetStatus": 1 }, None)?;
+                continue;
+            }
+        };
+
         let ReplSetStatus { members } = bson::from_bson(Bson::Document(response))?;
+
         if members.iter().any(|member| member.state_str == "PRIMARY") {
             return Ok(());
         }
+
+        std::thread::sleep(Duration::from_millis(250));
     }
 }
 
