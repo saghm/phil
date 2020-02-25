@@ -115,7 +115,7 @@ impl Cluster {
             doc! {
                 "createUser": credential.username.clone(),
                 "pwd": credential.password.clone(),
-                "roles": ["dbAdmin"]
+                "roles": ["root"]
             },
             None,
         )?;

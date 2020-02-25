@@ -130,10 +130,6 @@ pub(crate) fn mongos(
 
     processes.push(monger.run_background_command("mongos", args, version_id)?);
 
-    // In practice, the client starts up way faster than the server, so sleep for a short while to
-    // ensure that the server has time to start up.
-    std::thread::sleep(Duration::from_millis(1500));
-
     let mut options = ClientOptions::builder()
         .hosts(vec![stream_address("localhost".into(), port)])
         .credential(auth)
@@ -194,10 +190,6 @@ pub(crate) fn single_server(
     add_tls_options(&mut args, tls_options);
     let child = monger.start_mongod(args, version_id, false)?;
 
-    // In practice, the client starts up way faster than the server, so sleep for a short while to
-    // ensure that the server has time to start up.
-    std::thread::sleep(Duration::from_millis(1500));
-
     Ok(child)
 }
 
@@ -238,10 +230,6 @@ pub(crate) fn replica_set(
         add_tls_options(&mut args, tls_options);
         processes.push(monger.start_mongod(args, version_id, false)?);
     }
-
-    // In practice, the client starts up way faster than the server, so sleep for a short while to
-    // ensure that the server has time to start up.
-    std::thread::sleep(Duration::from_millis(1500));
 
     let config = doc! {
         "_id": set_name.clone(),
