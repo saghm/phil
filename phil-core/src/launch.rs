@@ -3,13 +3,13 @@ use std::{ffi::OsString, path::PathBuf, process::Child, time::Duration};
 use bson::{bson, doc, Bson, Document};
 use monger_core::Monger;
 use mongodb::{
-    options::{auth::Credential, ClientOptions, StreamAddress, Tls},
+    options::{auth::Credential as DriverCredential, ClientOptions, StreamAddress, Tls},
     Client,
 };
 use serde::Deserialize;
 
 use crate::{
-    cluster::TlsOptions,
+    cluster::{Cluster, Credential, Node, TlsOptions, Topology},
     error::{Error, Result},
 };
 
@@ -17,6 +17,217 @@ pub(crate) fn stream_address(host: &str, port: u16) -> StreamAddress {
     StreamAddress {
         hostname: host.into(),
         port: port.into(),
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Launcher {
+    monger: Monger,
+    topology: Topology,
+    version: String,
+    tls: Option<TlsOptions>,
+    credential: Option<Credential>,
+    nodes: Vec<Node>,
+}
+
+impl Launcher {
+    fn new(
+        topology: Topology,
+        tls: Option<TlsOptions>,
+        credential: Option<Credential>,
+    ) -> Result<Self> {
+        Ok(Self {
+            monger: Monger::new()?,
+            topology,
+            tls,
+            credential,
+            nodes: Default::default(),
+        })
+    }
+
+    fn add_node(&mut self, port: u16, db_path: Option<PathBuf>) -> Result<()> {
+        let mut args: Vec<OsString> = vec!["--port".into(), port.to_string().into()];
+
+        if let Some(path) = db_path {
+            args.push("--dbpath".into());
+            args.push(path.into_os_string());
+        }
+
+        match self.topology {
+            Topology::Single => {}
+            Topology::ReplicaSet { ref set_name, .. } => {
+                args.push("--replSet".into());
+                args.push(set_name.clone().into());
+            }
+            Topology::Sharded {
+                ref replica_set_name,
+                ..
+            } => {
+                args.push("--shardsvr".into());
+
+                if let Some(ref set_name) = replica_set_name {
+                    args.push("--replSet".into());
+                    args.push(set_name.clone().into());
+                }
+            }
+        }
+
+        if self.credential.is_some() {
+            args.push(OsString::from("--auth"));
+        }
+
+        if let Some(ref tls_options) = self.tls {
+            args.extend_from_slice(&[
+                OsString::from("--tlsMode"),
+                OsString::from("requireTLS"),
+                OsString::from("--tlsCAFile"),
+                OsString::from(&tls_options.ca_file_path),
+                OsString::from("--tlsCertificateKeyFile"),
+                OsString::from(&tls_options.server_cert_file_path),
+            ]);
+
+            if tls_options.weak_tls {
+                args.push(OsString::from("--tlsAllowConnectionsWithoutCertificates"));
+            }
+        }
+
+        let process = self.monger.start_mongod(args, &self.version, false)?;
+        let node = Node {
+            address: StreamAddress {
+                hostname: "localhost".into(),
+                port: Some(port),
+            },
+            process,
+            db_path,
+        };
+
+        self.nodes.push(node);
+    }
+
+    fn repl_set_name(&self) -> Option<&str> {
+        match self.topology {
+            Topology::Single => None,
+            Topology::ReplicaSet { ref set_name, .. } => Some(set_name),
+            Topology::Sharded { .. } => None,
+        }
+    }
+
+    fn client_options(&self) -> ClientOptions {
+        ClientOptions::builder()
+            .hosts(self.nodes.iter().map(|node| node.address.clone()).collect())
+            .credential(self.credential.clone().into())
+            .repl_set_name(self.repl_set_name())
+            .tls(self.tls.into())
+            .build()
+    }
+
+    fn configure_repl_set(&self, set_name: &str) -> Result<()> {
+        let set_name = match self.repl_set_name() {
+            Some(name) => name,
+            None => return Ok(()),
+        };
+
+        let config = doc! {
+            "_id": set_name,
+            "members": self.nodes.iter().enumerate().map(|(i, node)| {
+                Bson::Document(
+                    doc! {
+                        "_id": i as i32,
+                        "host": node.address.to_string(),
+                    }
+                )
+            }).collect::<Vec<_>>()
+        };
+
+        let mut options = self.client_options();
+        options.direct_connection = Some(true);
+        options.repl_set_name.take();
+
+        let client = Client::with_options(options)?;
+
+        let db = client.database("admin");
+        let mut cmd = doc! {
+            "replSetInitiate": config.clone(),
+        };
+        let mut already_initialized = false;
+
+        loop {
+            let response = db.run_command(cmd.clone(), None);
+
+            let response = match response {
+                Ok(response) => response,
+                Err(..) => {
+                    std::thread::sleep(Duration::from_millis(250));
+
+                    continue;
+                }
+            };
+
+            let CommandResponse { ok, code_name } =
+                bson::from_bson(Bson::Document(response.clone()))?;
+
+            if ok == 1.0 {
+                break;
+            }
+
+            if let Some(code_name) = code_name {
+                if code_name == "AlreadyInitialized" {
+                    if !already_initialized {
+                        cmd = doc! {
+                            "replSetReconfig": config.clone(),
+                        };
+                    }
+
+                    already_initialized = true;
+                }
+            }
+        }
+
+        loop {
+            let response = db.run_command(doc! { "replSetGetStatus": 1 }, None);
+            let response = match response {
+                Ok(response) => response,
+                Err(..) => {
+                    std::thread::sleep(Duration::from_millis(250));
+
+                    continue;
+                }
+            };
+
+            let ReplSetStatus { members } = bson::from_bson(Bson::Document(response))?;
+
+            if members.iter().any(|member| member.state_str == "PRIMARY") {
+                return Ok(());
+            }
+
+            std::thread::sleep(Duration::from_millis(250));
+        }
+    }
+
+    fn initialize_cluster(self) -> Result<Cluster> {
+        let client_options = self.client_options();
+
+        match self.topology {
+            Topology::Single => {}
+            Topology::ReplicaSet { ref set_name } => {
+                self.configure_repl_set()?;
+            }
+            Topology::Sharded {
+                ref replica_set_name,
+            } => {}
+        }
+
+        let cluster = Cluster {
+            monger: self.monger,
+            client: Client::with_options(client_options.clone())?,
+            client_options,
+            topology: Topology::Single,
+            tls: self.tls,
+            auth: self.credential,
+            nodes: self.nodes,
+        };
+
+        Ok(cluster)
     }
 }
 
@@ -47,82 +258,6 @@ struct ReplSetMember {
     state_str: String,
 }
 
-fn add_tls_options(args: &mut Vec<OsString>, tls_options: Option<&TlsOptions>) {
-    if let Some(tls_options) = tls_options {
-        args.extend_from_slice(&[
-            OsString::from("--tlsMode"),
-            OsString::from("requireTLS"),
-            OsString::from("--tlsCAFile"),
-            OsString::from(&tls_options.ca_file_path),
-            OsString::from("--tlsCertificateKeyFile"),
-            OsString::from(&tls_options.server_cert_file_path),
-        ]);
-
-        if tls_options.weak_tls {
-            args.push(OsString::from("--tlsAllowConnectionsWithoutCertificates"));
-        }
-    }
-}
-
-fn configure_repl_set(client: &Client, config: Document) -> Result<()> {
-    let db = client.database("admin");
-    let mut cmd = doc! {
-        "replSetInitiate": config.clone(),
-    };
-    let mut already_initialized = false;
-
-    loop {
-        let response = db.run_command(cmd.clone(), None);
-
-        let response = match response {
-            Ok(response) => response,
-            Err(..) => {
-                std::thread::sleep(Duration::from_millis(250));
-
-                continue;
-            }
-        };
-
-        let CommandResponse { ok, code_name } = bson::from_bson(Bson::Document(response.clone()))?;
-
-        if ok == 1.0 {
-            break;
-        }
-
-        if let Some(code_name) = code_name {
-            if code_name == "AlreadyInitialized" {
-                if !already_initialized {
-                    cmd = doc! {
-                        "replSetReconfig": config.clone(),
-                    };
-                }
-
-                already_initialized = true;
-            }
-        }
-    }
-
-    loop {
-        let response = db.run_command(doc! { "replSetGetStatus": 1 }, None);
-        let response = match response {
-            Ok(response) => response,
-            Err(..) => {
-                std::thread::sleep(Duration::from_millis(250));
-
-                continue;
-            }
-        };
-
-        let ReplSetStatus { members } = bson::from_bson(Bson::Document(response))?;
-
-        if members.iter().any(|member| member.state_str == "PRIMARY") {
-            return Ok(());
-        }
-
-        std::thread::sleep(Duration::from_millis(250));
-    }
-}
-
 pub(crate) fn mongos(
     monger: &Monger,
     processes: &mut Vec<Child>,
@@ -133,7 +268,7 @@ pub(crate) fn mongos(
     shard_ports: impl IntoIterator<Item = u16>,
     tls_options: Option<&TlsOptions>,
     shard_names: Option<Vec<String>>,
-    auth: Option<Credential>,
+    auth: Option<DriverCredential>,
 ) -> Result<Client> {
     let mut args = vec![
         OsString::from("--port"),
@@ -141,8 +276,6 @@ pub(crate) fn mongos(
         OsString::from("--configdb"),
         OsString::from(format!("{}/localhost:{}", config_name, config_port)),
     ];
-
-    add_tls_options(&mut args, tls_options);
 
     if auth.is_some() {
         args.push(OsString::from("--auth"));
@@ -179,109 +312,6 @@ pub(crate) fn mongos(
             return Err(Error::AddShardError { response });
         }
     }
-
-    Ok(client)
-}
-
-pub(crate) fn single_server(
-    monger: &Monger,
-    version_id: &str,
-    port: u16,
-    path: Option<PathBuf>,
-    tls_options: Option<&TlsOptions>,
-    shard_server: bool,
-    auth: bool,
-) -> Result<Child> {
-    let mut args: Vec<_> = vec![OsString::from("--port"), OsString::from(port.to_string())];
-
-    if let Some(path) = path {
-        args.push(OsString::from("--dbpath"));
-        args.push(path.into_os_string());
-    }
-
-    if shard_server {
-        args.push(OsString::from("--shardsvr"));
-    }
-
-    if auth {
-        args.push(OsString::from("--auth"));
-    }
-
-    add_tls_options(&mut args, tls_options);
-    let child = monger.start_mongod(args, version_id, false)?;
-
-    Ok(child)
-}
-
-pub(crate) fn replica_set(
-    monger: &Monger,
-    processes: &mut Vec<Child>,
-    version_id: &str,
-    hosts: Vec<StreamAddress>,
-    set_name: &str,
-    mut paths: impl Iterator<Item = PathBuf>,
-    tls_options: Option<&TlsOptions>,
-    server_shard_type: ServerShardType,
-    auth: Option<Credential>,
-) -> Result<Client> {
-    for host in &hosts {
-        let mut args = vec![
-            OsString::from("--port".to_string()),
-            OsString::from(host.port.unwrap().to_string()),
-            OsString::from("--replSet"),
-            OsString::from(set_name),
-        ];
-
-        if let Some(path) = paths.next() {
-            args.push(OsString::from("--dbpath"));
-            args.push(path.into_os_string());
-        }
-
-        match server_shard_type {
-            ServerShardType::Config => args.push(OsString::from("--configsvr")),
-            ServerShardType::Shard => args.push(OsString::from("--shardsvr")),
-            ServerShardType::None => {}
-        };
-
-        if auth.is_some() {
-            args.push(OsString::from("--auth"));
-        }
-
-        add_tls_options(&mut args, tls_options);
-        processes.push(monger.start_mongod(args, version_id, false)?);
-    }
-
-    let config = doc! {
-        "_id": set_name.clone(),
-        "members": hosts.iter().enumerate().map(|(i, host)| {
-            Bson::Document(
-                doc! {
-                    "_id": i as i32,
-                    "host": host.to_string(),
-                }
-            )
-        }).collect::<Vec<_>>()
-    };
-
-    let mut options = ClientOptions::builder()
-        .hosts(hosts)
-        .repl_set_name(set_name.to_string())
-        .credential(auth)
-        .build();
-
-    if let Some(tls_options) = tls_options {
-        options.tls = Some(Tls::from(tls_options.clone()));
-    }
-
-    let mut direct_options = options.clone();
-    direct_options.hosts.split_off(1);
-    direct_options.direct_connection = Some(true);
-    direct_options.repl_set_name.take();
-    let direct_client = Client::with_options(direct_options)?;
-
-    configure_repl_set(&direct_client, config)?;
-
-    let client = Client::with_options(options)?;
 
     Ok(client)
 }

@@ -1,10 +1,7 @@
 #[cfg(test)]
 mod test;
 
-use std::{
-    path::PathBuf,
-    process::{Child, Command},
-};
+use std::{path::PathBuf, process::Child};
 
 use bson::{bson, doc};
 use monger_core::Monger;
@@ -28,25 +25,19 @@ use crate::{
 #[derive(Debug, Clone)]
 pub enum Topology {
     Single,
-    ReplicaSet {
-        nodes: u8,
-        set_name: String,
-    },
-    Sharded {
-        num_shards: u8,
-        replica_set_shards: bool,
-    },
+    ReplicaSet { set_name: String },
+    Sharded { replica_set_name: Option<String> },
 }
 
 #[derive(Debug)]
 pub struct Cluster {
-    monger: Monger,
-    client: Client,
-    client_options: ClientOptions,
-    hosts: Vec<StreamAddress>,
-    topology: Topology,
-    tls: Option<TlsOptions>,
-    processes: Vec<Child>,
+    pub(crate) monger: Monger,
+    pub(crate) client: Client,
+    pub(crate) client_options: ClientOptions,
+    pub(crate) topology: Topology,
+    pub(crate) tls: Option<TlsOptions>,
+    pub(crate) auth: Option<Credential>,
+    pub(crate) nodes: Vec<Node>,
 }
 
 #[derive(Clone, Debug, TypedBuilder)]
@@ -63,6 +54,13 @@ pub struct ClusterOptions {
 
     #[builder(default)]
     pub auth: Option<Credential>,
+}
+
+#[derive(Debug)]
+pub(crate) struct Node {
+    pub(crate) address: StreamAddress,
+    pub(crate) process: Child,
+    pub(crate) db_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -173,25 +171,25 @@ impl Cluster {
 
     fn start_single_server(
         version_id: String,
-        path: Option<PathBuf>,
+        db_path: Option<PathBuf>,
         tls_options: Option<TlsOptions>,
         auth: bool,
     ) -> Result<Self> {
-        let hosts = vec![launch::stream_address("localhost", 27017)];
+        let address = launch::stream_address("localhost", 27017);
         let monger = Monger::new()?;
 
-        let child = launch::single_server(
+        let process = launch::single_server(
             &monger,
             &version_id,
             27017,
-            path,
+            db_path.clone(),
             tls_options.as_ref(),
             false,
             auth,
         )?;
 
         let client_options = ClientOptions::builder()
-            .hosts(hosts.clone())
+            .hosts(vec![address.clone()])
             .tls(tls_options.map(Into::into))
             .build();
         let client = Client::with_options(client_options.clone())?;
@@ -200,10 +198,14 @@ impl Cluster {
             monger,
             client,
             client_options,
-            hosts,
             topology: Topology::Single,
             tls: None,
-            processes: vec![child],
+            auth,
+            nodes: vec![Node {
+                address,
+                process,
+                db_path,
+            }],
         })
     }
 
@@ -230,7 +232,7 @@ impl Cluster {
             &version_id,
             hosts.clone(),
             &set_name,
-            paths.into_iter(),
+            paths.iter().cloned(),
             tls_options.as_ref(),
             ServerShardType::None,
             auth.clone(),
@@ -251,9 +253,18 @@ impl Cluster {
             monger,
             client,
             client_options,
-            hosts,
             tls: None,
-            processes,
+            auth: auth.is_some(),
+            nodes: hosts
+                .into_iter()
+                .zip(processes)
+                .zip(paths)
+                .map(|((address, process), db_path)| Node {
+                    address,
+                    process,
+                    db_path: Some(db_path),
+                })
+                .collect(),
         })
     }
 
@@ -343,11 +354,20 @@ impl Cluster {
                 replica_set_shards: false,
             },
             monger,
-            hosts,
             client,
             client_options,
             tls: None,
-            processes,
+            auth: auth.is_some(),
+            nodes: hosts
+                .into_iter()
+                .zip(processes)
+                .zip(paths)
+                .map(|((address, process), db_path)| Node {
+                    address,
+                    process,
+                    db_path: Some(db_path),
+                })
+                .collect(),
         })
     }
 
@@ -443,22 +463,20 @@ impl Cluster {
                 replica_set_shards: false,
             },
             monger,
-            hosts,
             client,
             client_options,
             tls: None,
-            processes,
+            auth: auth.is_some(),
+            nodes: hosts
+                .into_iter()
+                .zip(processes)
+                .zip(paths)
+                .map(|((address, process), db_path)| Node {
+                    address,
+                    process,
+                    db_path: Some(db_path),
+                })
+                .collect(),
         })
-    }
-
-    pub fn shutdown(self) -> Result<()> {
-        for mut process in self.processes {
-            Command::new("kill")
-                .args(&[process.id().to_string()])
-                .output()?;
-            process.wait()?;
-        }
-
-        Ok(())
     }
 }
