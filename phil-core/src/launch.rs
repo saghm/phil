@@ -10,7 +10,7 @@ use serde::Deserialize;
 
 use crate::{
     cluster::{Cluster, Credential, Node, TlsOptions, Topology},
-    error::{Error, Result},
+    error::Result,
 };
 
 fn localhost_address(port: u16) -> StreamAddress {
@@ -23,6 +23,7 @@ fn localhost_address(port: u16) -> StreamAddress {
 struct MongodOptions {
     port: u16,
     db_path: Option<PathBuf>,
+    config_server: bool,
     shard_server: bool,
     repl_set_name: Option<String>,
 }
@@ -79,7 +80,7 @@ impl Launcher {
     }
 
     fn start_mongod(&mut self, options: MongodOptions) -> Result<Node> {
-        let mut args: Vec<OsString> = vec!["--port".into(), self.next_port().to_string().into()];
+        let mut args: Vec<OsString> = vec!["--port".into(), options.port.to_string().into()];
 
         if let Some(ref path) = options.db_path {
             args.push("--dbpath".into());
@@ -88,6 +89,14 @@ impl Launcher {
 
         if self.credential.is_some() {
             args.push("--auth".into());
+        }
+
+        if let Some(ref set_name) = options.repl_set_name {
+            args.extend_from_slice(&["--replSet".into(), set_name.into()]);
+        }
+
+        if options.config_server {
+            args.push("--configsvr".into());
         }
 
         if let Some(ref tls_options) = self.tls {
@@ -120,21 +129,22 @@ impl Launcher {
         Ok(node)
     }
 
-    fn configure_repl_set(&self, set_name: &str) -> Result<()> {
+    fn configure_repl_set(&self, set_name: &str, config_server: bool) -> Result<()> {
         let nodes: Vec<_> = self
             .repl_set_addresses(set_name.into())
             .enumerate()
             .map(|(i, address)| {
                 Bson::Document(doc! {
                     "_id": i as i32,
-                    "host": address.to_string(),
+                    "host": address.to_string()
                 })
             })
             .collect();
 
         let config = doc! {
             "_id": set_name,
-            "members": nodes,
+            "configsvr": config_server,
+            "members": nodes
         };
 
         let options = ClientOptions::builder()
@@ -212,6 +222,7 @@ impl Launcher {
     fn start_repl_set(
         &mut self,
         repl_set_name: &str,
+        config_server: bool,
         shard_server: bool,
         db_paths: Vec<PathBuf>,
     ) -> Result<()> {
@@ -219,6 +230,7 @@ impl Launcher {
             let options = MongodOptions {
                 port: self.next_port(),
                 db_path: Some(db_path),
+                config_server,
                 shard_server,
                 repl_set_name: Some(repl_set_name.into()),
             };
@@ -227,7 +239,7 @@ impl Launcher {
             self.nodes.push(node);
         }
 
-        self.configure_repl_set(repl_set_name)?;
+        self.configure_repl_set(repl_set_name, config_server)?;
 
         Ok(())
     }
@@ -236,11 +248,15 @@ impl Launcher {
         let config_db_options = MongodOptions {
             port,
             db_path: Some(db_path),
+            config_server: true,
             shard_server: false,
             repl_set_name: Some(name.into()),
         };
 
-        self.start_mongod(config_db_options)?;
+        let node = self.start_mongod(config_db_options)?;
+        self.nodes.push(node);
+
+        self.configure_repl_set(name, true)?;
 
         Ok(())
     }
@@ -252,6 +268,22 @@ impl Launcher {
             "--configdb".into(),
             format!("{}/localhost:{}", config_db_name, config_db_port).into(),
         ];
+
+        if let Some(ref tls_options) = self.tls {
+            args.extend_from_slice(&[
+                "--tlsMode".into(),
+                "requireTLS".into(),
+                "--tlsCAFile".into(),
+                tls_options.ca_file_path.clone().into(),
+                "--tlsCertificateKeyFile".into(),
+                tls_options.server_cert_file_path.clone().into(),
+                "--tlsAllowInvalidCertificates".into(),
+            ]);
+
+            if tls_options.weak_tls {
+                args.push("--tlsAllowConnectionsWithoutCertificates".into());
+            }
+        }
 
         if self.credential.is_some() {
             args.push("--auth".into());
@@ -267,6 +299,7 @@ impl Launcher {
         let options = MongodOptions {
             port,
             db_path: Some(db_path),
+            config_server: false,
             shard_server: true,
             repl_set_name: None,
         };
@@ -283,18 +316,29 @@ impl Launcher {
 
         let name = format!("phil-replset-shard-{}", self.next_shard_id());
 
-        let response = client.database("admin").run_command(
-            doc! {
-                "addShard": localhost_address(port).to_string(),
-                "name": name
-            },
-            None,
-        )?;
+        let db = client.database("admin");
+        let cmd = doc! {
+            "addShard": localhost_address(port).to_string(),
+            "name": name
+        };
 
-        let CommandResponse { ok, .. } = bson::from_bson(Bson::Document(response.clone()))?;
+        loop {
+            let response = db.run_command(cmd.clone(), None);
 
-        if ok != 1.0 {
-            return Err(Error::AddShardError { response });
+            let response = match response {
+                Ok(response) => response,
+                Err(..) => {
+                    std::thread::sleep(Duration::from_millis(250));
+
+                    continue;
+                }
+            };
+
+            let CommandResponse { ok, .. } = bson::from_bson(Bson::Document(response.clone()))?;
+
+            if ok == 1.0 {
+                break;
+            }
         }
 
         Ok(())
@@ -302,7 +346,7 @@ impl Launcher {
 
     fn add_replset_shard(&mut self, mongos_port: u16, db_paths: Vec<PathBuf>) -> Result<()> {
         let name = format!("phil-replset-shard-{}", self.next_shard_id());
-        self.start_repl_set(&name, true, db_paths)?;
+        self.start_repl_set(&name, false, true, db_paths)?;
 
         let options = ClientOptions::builder()
             .hosts(vec![localhost_address(mongos_port)])
@@ -317,18 +361,29 @@ impl Launcher {
             .map(|address| address.to_string())
             .collect();
 
-        let response = client.database("admin").run_command(
-            doc! {
-                "addShard": format!("{}/{}", name, node_addresses.join(",")),
-                "name": name
-            },
-            None,
-        )?;
+        let db = client.database("admin");
+        let cmd = doc! {
+            "addShard": format!("{}/{}", name, node_addresses.join(",")),
+            "name": name
+        };
 
-        let CommandResponse { ok, .. } = bson::from_bson(Bson::Document(response.clone()))?;
+        loop {
+            let response = db.run_command(cmd.clone(), None);
 
-        if ok != 1.0 {
-            return Err(Error::AddShardError { response });
+            let response = match response {
+                Ok(response) => response,
+                Err(..) => {
+                    std::thread::sleep(Duration::from_millis(250));
+
+                    continue;
+                }
+            };
+
+            let CommandResponse { ok, .. } = bson::from_bson(Bson::Document(response.clone()))?;
+
+            if ok == 1.0 {
+                break;
+            }
         }
 
         Ok(())
@@ -345,6 +400,7 @@ impl Launcher {
                 let options = MongodOptions {
                     port: 27017,
                     db_path: None,
+                    config_server: false,
                     shard_server: false,
                     repl_set_name: None,
                 };
@@ -355,7 +411,7 @@ impl Launcher {
                 client_options.hosts = vec![localhost_address(27017)];
             }
             Topology::ReplicaSet { set_name, db_paths } => {
-                self.start_repl_set(&set_name, false, db_paths.to_vec())?;
+                self.start_repl_set(&set_name, false, false, db_paths.to_vec())?;
 
                 client_options.hosts = (0..db_paths.len())
                     .into_iter()
@@ -367,12 +423,12 @@ impl Launcher {
                 shard_db_paths,
                 config_db_path,
             } => {
+                let mongos_port1 = self.next_port();
+                let mongos_port2 = self.next_port();
+
                 let config_db_port = self.next_port();
                 let config_db_name = "phil-config-server";
                 self.add_config_db(config_db_port, config_db_name, config_db_path.clone())?;
-
-                let mongos_port1 = self.next_port();
-                let mongos_port2 = self.next_port();
 
                 self.add_mongos(mongos_port1, config_db_port, config_db_name)?;
                 self.add_mongos(mongos_port2, config_db_port, config_db_name)?;

@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use clap::{crate_authors, crate_description, crate_version, App, AppSettings, Arg, ArgGroup};
+use clap::{crate_authors, crate_description, crate_version, App, AppSettings, Arg};
 use phil_core::cluster::{Cluster, ClusterOptions, Credential, TlsOptions, Topology};
 use uuid::Uuid;
 
@@ -72,34 +72,24 @@ fn main() -> Result<()> {
                 .default_value_if("topology", Some("sharded"), "replset"),
         )
         .arg(
-            Arg::with_name("auth")
-                .help("enables authentication for the cluster")
-                .long("auth")
-                .takes_value(false),
-        )
-        .group(ArgGroup::with_name("tls-option").arg("weak-tls").arg("tls"))
-        .arg(
-            Arg::with_name("weak-tls")
-                .help(
-                    "enable (and require) TLS for the cluster without verifying client \
-                     certificates",
-                )
-                .long("weak-tls")
-                .takes_value(false),
-        )
-        .arg(
             Arg::with_name("tls")
                 .help("enable (and require) TLS for the cluster")
                 .long("tls")
+                .takes_value(false),
+        )
+        .arg(
+            Arg::with_name("allow-clients-without-certs")
+                .help("allow clients to connect to the server without TLS certificates")
+                .long("allow-clients-without-certs")
                 .takes_value(false)
-                .conflicts_with("weak-tls"),
+                .requires("tls"),
         )
         .arg(
             Arg::with_name("ca-file")
                 .help("the certificate authority file to use for TLS (defaults to ./ca.pem)")
                 .long("ca-file")
                 .takes_value(true)
-                .requires("tls-option"),
+                .requires("tls"),
         )
         .arg(
             Arg::with_name("server-cert-file")
@@ -109,7 +99,7 @@ fn main() -> Result<()> {
                 )
                 .long("server-cert-file")
                 .takes_value(true)
-                .requires("tls-option"),
+                .requires("tls"),
         )
         .arg(
             Arg::with_name("client-cert-file")
@@ -175,7 +165,7 @@ fn main() -> Result<()> {
         _ => unreachable!(),
     };
 
-    if matches.is_present("weak-tls") || matches.is_present("tls") {
+    if matches.is_present("tls") {
         let ca_file_path =
             Path::new(matches.value_of("ca-file").unwrap_or("./ca.pem")).canonicalize()?;
         let server_cert_file_path =
@@ -188,7 +178,7 @@ fn main() -> Result<()> {
         .canonicalize()?;
 
         cluster_options.tls = Some(TlsOptions {
-            weak_tls: matches.is_present("weak-tls"),
+            weak_tls: matches.is_present("allow-clients-without-certs"),
             allow_invalid_certificates: true,
             ca_file_path,
             server_cert_file_path,
