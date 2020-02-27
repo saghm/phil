@@ -1,14 +1,13 @@
 #[cfg(test)]
 mod test;
 
-use std::{path::PathBuf, process::Child};
+use std::path::PathBuf;
 
 use monger_core::Monger;
 use mongodb::{
     options::{
         auth::Credential as DriverCredential,
         ClientOptions,
-        StreamAddress,
         Tls,
         TlsOptions as DriverTlsOptions,
     },
@@ -16,7 +15,10 @@ use mongodb::{
 };
 use typed_builder::TypedBuilder;
 
-use crate::{error::Result, launch::Launcher};
+use crate::{
+    error::Result,
+    launch::{Launcher, Node},
+};
 
 #[derive(Debug, Clone)]
 pub enum Topology {
@@ -56,14 +58,6 @@ pub struct ClusterOptions {
 
     #[builder(default)]
     pub auth: Option<Credential>,
-}
-
-#[derive(Debug)]
-pub(crate) struct Node {
-    pub(crate) address: StreamAddress,
-    pub(crate) process: Child,
-    pub(crate) db_path: Option<PathBuf>,
-    pub(crate) repl_set_name: Option<String>,
 }
 
 #[derive(Debug, Clone)]

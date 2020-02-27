@@ -1,15 +1,20 @@
-use std::{ffi::OsString, path::PathBuf, process::Child, time::Duration};
+use std::{
+    ffi::OsString,
+    path::PathBuf,
+    process::{Child, Command},
+    time::Duration,
+};
 
 use bson::{bson, doc, Bson};
 use monger_core::Monger;
 use mongodb::{
-    options::{auth::Credential as DriverCredential, ClientOptions, StreamAddress},
+    options::{ClientOptions, StreamAddress},
     Client,
 };
 use serde::Deserialize;
 
 use crate::{
-    cluster::{Cluster, Credential, Node, TlsOptions, Topology},
+    cluster::{Cluster, Credential, TlsOptions, Topology},
     error::Result,
 };
 
@@ -20,7 +25,14 @@ fn localhost_address(port: u16) -> StreamAddress {
     }
 }
 
-struct MongodOptions {
+#[derive(Debug)]
+pub(crate) struct Node {
+    pub(crate) process: Child,
+    pub(crate) options: MongodOptions,
+}
+
+#[derive(Debug)]
+pub(crate) struct MongodOptions {
     port: u16,
     db_path: Option<PathBuf>,
     config_server: bool,
@@ -69,10 +81,10 @@ impl Launcher {
         std::mem::replace(&mut self.shard_count, next_count)
     }
 
-    fn repl_set_addresses(&self, repl_set_name: String) -> impl Iterator<Item = &StreamAddress> {
+    fn repl_set_addresses(&self, repl_set_name: String) -> impl Iterator<Item = u16> + '_ {
         self.nodes.iter().filter_map(move |node| {
-            if node.repl_set_name == Some(repl_set_name.clone()) {
-                Some(&node.address)
+            if node.options.repl_set_name == Some(repl_set_name.clone()) {
+                Some(node.options.port)
             } else {
                 None
             }
@@ -119,12 +131,7 @@ impl Launcher {
         }
 
         let process = self.monger.start_mongod(args, &self.version, false)?;
-        let node = Node {
-            address: localhost_address(options.port),
-            process,
-            db_path: options.db_path,
-            repl_set_name: options.repl_set_name,
-        };
+        let node = Node { process, options };
 
         Ok(node)
     }
@@ -133,10 +140,10 @@ impl Launcher {
         let nodes: Vec<_> = self
             .repl_set_addresses(set_name.into())
             .enumerate()
-            .map(|(i, address)| {
+            .map(|(i, port)| {
                 Bson::Document(doc! {
                     "_id": i as i32,
-                    "host": address.to_string()
+                    "host": localhost_address(port).to_string(),
                 })
             })
             .collect();
@@ -148,11 +155,9 @@ impl Launcher {
         };
 
         let options = ClientOptions::builder()
-            .hosts(vec![self
-                .repl_set_addresses(set_name.into())
-                .next()
-                .unwrap()
-                .clone()])
+            .hosts(vec![localhost_address(
+                self.repl_set_addresses(set_name.into()).next().unwrap(),
+            )])
             .tls(self.tls.clone().map(Into::into))
             .credential(self.credential.clone().map(Into::into))
             .direct_connection(true)
@@ -236,6 +241,7 @@ impl Launcher {
             };
 
             let node = self.start_mongod(options)?;
+
             self.nodes.push(node);
         }
 
@@ -358,7 +364,7 @@ impl Launcher {
 
         let node_addresses: Vec<_> = self
             .repl_set_addresses(name.clone())
-            .map(|address| address.to_string())
+            .map(|port| localhost_address(port).to_string())
             .collect();
 
         let db = client.database("admin");
@@ -394,6 +400,7 @@ impl Launcher {
             .tls(self.tls.clone().map(Into::into))
             .credential(self.credential.clone().map(Into::into))
             .build();
+        let credential = self.credential.take();
 
         match self.topology.clone() {
             Topology::Single => {
@@ -449,6 +456,26 @@ impl Launcher {
                 ];
             }
         };
+
+        // let pre_auth_nodes = std::mem::replace(&mut self.nodes, Vec::new());
+
+        // if let Some(credential) = credential {
+        //     self.credential = Some(credential);
+        // }
+
+        // for mut pre_auth_node in pre_auth_nodes {
+        //     let options = pre_auth_node.options;
+
+        //     Command::new("kill")
+        //         .args(&[pre_auth_node.process.id().to_string()])
+        //         .spawn()?
+        //         .wait()?;
+
+        //     pre_auth_node.process.wait()?;
+
+        //     let auth_node = self.start_mongod(options)?;
+        //     self.nodes.push(auth_node);
+        // }
 
         let cluster = Cluster {
             monger: self.monger,
