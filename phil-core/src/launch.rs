@@ -1,9 +1,9 @@
 use std::{ffi::OsString, path::PathBuf, process::Child, time::Duration};
 
-use bson::{bson, doc, Bson, Document};
+use bson::{bson, doc, Bson};
 use monger_core::Monger;
 use mongodb::{
-    options::{auth::Credential as DriverCredential, ClientOptions, StreamAddress, Tls},
+    options::{auth::Credential as DriverCredential, ClientOptions, StreamAddress},
     Client,
 };
 use serde::Deserialize;
@@ -40,7 +40,7 @@ pub(crate) struct Launcher {
 }
 
 impl Launcher {
-    fn new(
+    pub(crate) fn new(
         topology: Topology,
         version: String,
         tls: Option<TlsOptions>,
@@ -83,26 +83,30 @@ impl Launcher {
 
         if let Some(ref path) = options.db_path {
             args.push("--dbpath".into());
-            args.push(path.clone().into_os_string());
+            args.push(path.clone().into());
         }
 
         if self.credential.is_some() {
-            args.push(OsString::from("--auth"));
+            args.push("--auth".into());
         }
 
         if let Some(ref tls_options) = self.tls {
             args.extend_from_slice(&[
-                OsString::from("--tlsMode"),
-                OsString::from("requireTLS"),
-                OsString::from("--tlsCAFile"),
-                OsString::from(&tls_options.ca_file_path),
-                OsString::from("--tlsCertificateKeyFile"),
-                OsString::from(&tls_options.server_cert_file_path),
+                "--tlsMode".into(),
+                "requireTLS".into(),
+                "--tlsCAFile".into(),
+                tls_options.ca_file_path.clone().into(),
+                "--tlsCertificateKeyFile".into(),
+                tls_options.server_cert_file_path.clone().into(),
             ]);
 
             if tls_options.weak_tls {
-                args.push(OsString::from("--tlsAllowConnectionsWithoutCertificates"));
+                args.push("--tlsAllowConnectionsWithoutCertificates".into());
             }
+        }
+
+        if options.shard_server {
+            args.push("--shardsvr".into());
         }
 
         let process = self.monger.start_mongod(args, &self.version, false)?;
@@ -250,7 +254,7 @@ impl Launcher {
         ];
 
         if self.credential.is_some() {
-            args.push(OsString::from("--auth"));
+            args.push("--auth".into());
         }
 
         self.monger
@@ -330,7 +334,7 @@ impl Launcher {
         Ok(())
     }
 
-    fn initialize_cluster(mut self) -> Result<Cluster> {
+    pub(crate) fn initialize_cluster(mut self) -> Result<Cluster> {
         let mut client_options = ClientOptions::builder()
             .tls(self.tls.clone().map(Into::into))
             .credential(self.credential.clone().map(Into::into))

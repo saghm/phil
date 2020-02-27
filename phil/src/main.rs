@@ -136,9 +136,11 @@ fn main() -> Result<()> {
             let paths: Result<Vec<_>> = (0..nodes).map(|_| create_tempdir()).collect();
 
             ClusterOptions::builder()
-                .topology(Topology::ReplicaSet { nodes, set_name })
+                .topology(Topology::ReplicaSet {
+                    db_paths: paths?,
+                    set_name,
+                })
                 .version_id(version_id)
-                .paths(paths?)
                 .build()
         }
         "sharded" => {
@@ -147,20 +149,27 @@ fn main() -> Result<()> {
                 .value_of("shard-type")
                 .map(|shard_type| shard_type == "replset")
                 .unwrap_or(true);
-            let num_servers = if replica_set_shards {
-                num_shards * 3
-            } else {
-                num_shards
-            };
-            let paths: Result<Vec<_>> = (0..num_servers).map(|_| create_tempdir()).collect();
+
+            let db_paths: Result<_> = (0..num_shards)
+                .map(|_| {
+                    if replica_set_shards {
+                        Ok(vec![
+                            create_tempdir()?,
+                            create_tempdir()?,
+                            create_tempdir()?,
+                        ])
+                    } else {
+                        Ok(vec![create_tempdir()?])
+                    }
+                })
+                .collect();
 
             ClusterOptions::builder()
                 .topology(Topology::Sharded {
-                    num_shards,
-                    replica_set_shards,
+                    shard_db_paths: db_paths?,
+                    config_db_path: create_tempdir()?,
                 })
                 .version_id(version_id)
-                .paths(paths?)
                 .build()
         }
         _ => unreachable!(),
