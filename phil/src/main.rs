@@ -111,6 +111,12 @@ fn main() -> Result<()> {
                 .takes_value(true)
                 .requires("tls"),
         )
+        .arg(
+            Arg::with_name("auth")
+                .help("require authentication to connect to the cluster")
+                .long("auth")
+                .takes_value(false),
+        )
         .get_matches();
 
     let version_id = matches.value_of("ID").unwrap().to_string();

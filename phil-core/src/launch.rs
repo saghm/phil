@@ -41,6 +41,19 @@ pub(crate) struct MongodOptions {
 }
 
 #[derive(Debug)]
+pub(crate) struct Router {
+    process: Child,
+    options: MongosOptions,
+}
+
+#[derive(Debug)]
+pub(crate) struct MongosOptions {
+    port: u16,
+    config_db_port: u16,
+    config_db_name: String,
+}
+
+#[derive(Debug)]
 pub(crate) struct Launcher {
     monger: Monger,
     topology: Topology,
@@ -48,6 +61,7 @@ pub(crate) struct Launcher {
     tls: Option<TlsOptions>,
     credential: Option<Credential>,
     nodes: Vec<Node>,
+    routers: Vec<Router>,
     next_port: u16,
     shard_count: u8,
 }
@@ -66,6 +80,7 @@ impl Launcher {
             tls,
             credential,
             nodes: Default::default(),
+            routers: Default::default(),
             next_port: 27017,
             shard_count: 0,
         })
@@ -100,7 +115,7 @@ impl Launcher {
         }
 
         if self.credential.is_some() {
-            args.push("--auth".into());
+            args.extend_from_slice(&["--auth".into(), "--keyFile".into(), "./keyfile".into()]);
         }
 
         if let Some(ref set_name) = options.repl_set_name {
@@ -267,12 +282,16 @@ impl Launcher {
         Ok(())
     }
 
-    fn add_mongos(&self, port: u16, config_db_port: u16, config_db_name: &str) -> Result<()> {
+    fn start_mongos(&self, options: MongosOptions) -> Result<Router> {
         let mut args: Vec<OsString> = vec![
             "--port".into(),
-            port.to_string().into(),
+            options.port.to_string().into(),
             "--configdb".into(),
-            format!("{}/localhost:{}", config_db_name, config_db_port).into(),
+            format!(
+                "{}/localhost:{}",
+                options.config_db_name, options.config_db_port
+            )
+            .into(),
         ];
 
         if let Some(ref tls_options) = self.tls {
@@ -292,13 +311,15 @@ impl Launcher {
         }
 
         if self.credential.is_some() {
-            args.push("--auth".into());
+            args.extend_from_slice(&["--keyFile".into(), "./keyfile".into()]);
         }
 
-        self.monger
+        let process = self
+            .monger
             .run_background_command("mongos", args, &self.version)?;
+        let router = Router { process, options };
 
-        Ok(())
+        Ok(router)
     }
 
     fn add_singleton_shard(&mut self, port: u16, mongos_port: u16, db_path: PathBuf) -> Result<()> {
@@ -398,7 +419,6 @@ impl Launcher {
     pub(crate) fn initialize_cluster(mut self) -> Result<Cluster> {
         let mut client_options = ClientOptions::builder()
             .tls(self.tls.clone().map(Into::into))
-            .credential(self.credential.clone().map(Into::into))
             .build();
         let credential = self.credential.take();
 
@@ -437,8 +457,22 @@ impl Launcher {
                 let config_db_name = "phil-config-server";
                 self.add_config_db(config_db_port, config_db_name, config_db_path.clone())?;
 
-                self.add_mongos(mongos_port1, config_db_port, config_db_name)?;
-                self.add_mongos(mongos_port2, config_db_port, config_db_name)?;
+                let mongos_options1 = MongosOptions {
+                    port: mongos_port1,
+                    config_db_port,
+                    config_db_name: config_db_name.into(),
+                };
+                let mongos_options2 = MongosOptions {
+                    port: mongos_port2,
+                    config_db_port,
+                    config_db_name: config_db_name.into(),
+                };
+
+                let router1 = self.start_mongos(mongos_options1)?;
+                let router2 = self.start_mongos(mongos_options2)?;
+
+                self.routers.push(router1);
+                self.routers.push(router2);
 
                 for shard_db_path_set in shard_db_paths {
                     if shard_db_path_set.len() == 1 {
@@ -457,25 +491,49 @@ impl Launcher {
             }
         };
 
-        // let pre_auth_nodes = std::mem::replace(&mut self.nodes, Vec::new());
+        if let Some(credential) = credential {
+            self.credential = Some(credential.clone());
 
-        // if let Some(credential) = credential {
-        //     self.credential = Some(credential);
-        // }
+            let client = Client::with_options(client_options.clone())?;
+            client.database("admin").run_command(
+                doc! {
+                    "createUser": credential.username.clone(),
+                    "pwd": credential.password.clone(),
+                    "roles": ["root"],
+                },
+                None,
+            )?;
 
-        // for mut pre_auth_node in pre_auth_nodes {
-        //     let options = pre_auth_node.options;
+            client_options.credential = Some(credential.into());
 
-        //     Command::new("kill")
-        //         .args(&[pre_auth_node.process.id().to_string()])
-        //         .spawn()?
-        //         .wait()?;
+            let pre_auth_nodes = std::mem::replace(&mut self.nodes, Vec::new());
 
-        //     pre_auth_node.process.wait()?;
+            for mut pre_auth_node in pre_auth_nodes {
+                Command::new("kill")
+                    .args(&[pre_auth_node.process.id().to_string()])
+                    .spawn()?
+                    .wait()?;
 
-        //     let auth_node = self.start_mongod(options)?;
-        //     self.nodes.push(auth_node);
-        // }
+                pre_auth_node.process.wait()?;
+
+                let auth_node = self.start_mongod(pre_auth_node.options)?;
+                self.nodes.push(auth_node);
+            }
+
+            let pre_auth_routers = std::mem::replace(&mut self.routers, Vec::new());
+
+            for mut pre_auth_router in pre_auth_routers {
+                Command::new("kill")
+                    .args(&[pre_auth_router.process.id().to_string()])
+                    .spawn()?
+                    .wait()?;
+
+                pre_auth_router.process.wait()?;
+
+                let auth_router = self.start_mongos(pre_auth_router.options)?;
+                self.routers.push(auth_router);
+            }
+        }
 
         let cluster = Cluster {
             monger: self.monger,
