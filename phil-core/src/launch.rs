@@ -608,10 +608,12 @@ impl Launcher {
             println!("restarting servers with auth enabled...");
 
             for mut pre_auth_node in pre_auth_nodes {
-                println!(
-                    "    shutting down mongod on port {}...",
-                    pre_auth_node.options.port
-                );
+                if self.verbose {
+                    println!(
+                        "    shutting down mongod on port {}...",
+                        pre_auth_node.options.port
+                    );
+                }
 
                 Command::new("kill")
                     .args(&[pre_auth_node.process.id().to_string()])
