@@ -65,6 +65,7 @@ pub(crate) struct Launcher {
     next_port: u16,
     shard_count: u8,
     verbose: bool,
+    extra_mongod_args: Option<Vec<OsString>>,
 }
 
 impl Launcher {
@@ -74,6 +75,7 @@ impl Launcher {
         tls: Option<TlsOptions>,
         credential: Option<Credential>,
         verbose: bool,
+        extra_mongod_args: Option<Vec<OsString>>,
     ) -> Result<Self> {
         Ok(Self {
             monger: Monger::new()?,
@@ -86,6 +88,7 @@ impl Launcher {
             next_port: 27017,
             shard_count: 0,
             verbose,
+            extra_mongod_args,
         })
     }
 
@@ -152,6 +155,10 @@ impl Launcher {
             args.push("--shardsvr".into());
         }
 
+        if let Some(ref extra_mongod_args) = self.extra_mongod_args {
+            args.extend_from_slice(extra_mongod_args);
+        }
+
         if self.verbose {
             print!("    starting");
 
@@ -178,10 +185,6 @@ impl Launcher {
             }
 
             println!("...");
-        }
-
-        if self.credential.is_some() {
-            &args;
         }
 
         let process = self.monger.start_mongod(args, &self.version, false)?;

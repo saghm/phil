@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod test;
 
-use std::path::PathBuf;
+use std::{ffi::OsString, path::PathBuf};
 
 use monger_core::Monger;
 use mongodb::{
@@ -59,6 +59,8 @@ pub struct ClusterOptions {
     #[builder(default)]
     pub auth: Option<Credential>,
 
+    extra_mongod_args: Option<Vec<OsString>>,
+
     verbose: bool,
 }
 
@@ -106,6 +108,7 @@ impl Cluster {
             options.tls,
             options.auth,
             options.verbose,
+            options.extra_mongod_args,
         )?;
 
         launcher.initialize_cluster()

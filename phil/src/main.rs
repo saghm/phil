@@ -134,15 +134,25 @@ fn main() -> Result<()> {
                 .short("v")
                 .takes_value(false),
         )
+        .arg(
+            Arg::with_name("MONGOD_ARGS")
+                .help("extra arguments for the mongod being run")
+                .multiple(true)
+                .last(true),
+        )
         .get_matches();
 
     let version_id = matches.value_of("ID").unwrap().to_string();
+    let extra_mongod_args = matches
+        .values_of("MONGOD_ARGS")
+        .map(|args| args.map(Into::into).collect());
 
     let mut cluster_options = match matches.value_of("TOPOLOGY").unwrap() {
         "single" => ClusterOptions::builder()
             .topology(Topology::Single)
             .version_id(version_id)
             .verbose(matches.is_present("verbose"))
+            .extra_mongod_args(extra_mongod_args)
             .build(),
         "replset" => {
             let nodes = matches.value_of("nodes").unwrap_or("3").parse()?;
@@ -156,6 +166,7 @@ fn main() -> Result<()> {
                 })
                 .version_id(version_id)
                 .verbose(matches.is_present("verbose"))
+                .extra_mongod_args(extra_mongod_args)
                 .build()
         }
         "sharded" => {
@@ -186,6 +197,7 @@ fn main() -> Result<()> {
                 })
                 .version_id(version_id)
                 .verbose(matches.is_present("verbose"))
+                .extra_mongod_args(extra_mongod_args)
                 .build()
         }
         _ => unreachable!(),
