@@ -64,6 +64,7 @@ pub(crate) struct Launcher {
     routers: Vec<Router>,
     next_port: u16,
     shard_count: u8,
+    verbose: bool,
 }
 
 impl Launcher {
@@ -72,6 +73,7 @@ impl Launcher {
         version: String,
         tls: Option<TlsOptions>,
         credential: Option<Credential>,
+        verbose: bool,
     ) -> Result<Self> {
         Ok(Self {
             monger: Monger::new()?,
@@ -83,6 +85,7 @@ impl Launcher {
             routers: Default::default(),
             next_port: 27017,
             shard_count: 0,
+            verbose,
         })
     }
 
@@ -149,6 +152,38 @@ impl Launcher {
             args.push("--shardsvr".into());
         }
 
+        if self.verbose {
+            print!("    starting");
+
+            if options.config_server {
+                print!(" config server");
+            }
+
+            if options.shard_server {
+                print!(" shard server");
+            }
+
+            print!(" mongod on port {}", options.port);
+
+            if let Some(ref name) = options.repl_set_name {
+                print!(" in repl set '{}'", name);
+            }
+
+            if self.credential.is_some() && self.tls.is_some() {
+                print!(" with auth and TLS enabled");
+            } else if self.credential.is_some() {
+                print!(" with auth enabled");
+            } else if self.tls.is_some() {
+                print!(" with TLS enabled");
+            }
+
+            println!("...");
+        }
+
+        if self.credential.is_some() {
+            &args;
+        }
+
         let process = self.monger.start_mongod(args, &self.version, false)?;
         let node = Node { process, options };
 
@@ -192,6 +227,8 @@ impl Launcher {
 
         if log {
             println!("configuring replica set...");
+        } else if self.verbose {
+            println!("    configuring replica set...");
         }
 
         loop {
@@ -331,6 +368,20 @@ impl Launcher {
             args.extend_from_slice(&["--keyFile".into(), credential.key_file.as_os_str().into()]);
         }
 
+        if self.verbose {
+            print!("starting mongos sharding router on port {}", options.port);
+
+            if self.credential.is_some() && self.tls.is_some() {
+                print!(" with auth and TLS enabled");
+            } else if self.credential.is_some() {
+                print!(" with auth enabled");
+            } else if self.tls.is_some() {
+                print!(" with TLS enabled");
+            }
+
+            println!("...");
+        }
+
         let process = self
             .monger
             .run_background_command("mongos", args, &self.version)?;
@@ -359,6 +410,10 @@ impl Launcher {
         let client = Client::with_options(client_options)?;
 
         let name = format!("phil-replset-shard-{}", self.next_shard_id());
+
+        if self.verbose {
+            println!("    adding single shard on port {} to cluster...", port);
+        }
 
         let db = client.database("admin");
         let cmd = doc! {
@@ -404,6 +459,13 @@ impl Launcher {
             .repl_set_addresses(name.clone())
             .map(|port| localhost_address(port).to_string())
             .collect();
+
+        if self.verbose {
+            println!(
+                "    adding replica set shard with set name {} to cluster...",
+                name
+            );
+        }
 
         let db = client.database("admin");
         let cmd = doc! {
@@ -499,7 +561,13 @@ impl Launcher {
 
                 println!("adding shards...");
 
+                let mut first = true;
+
                 for shard_db_path_set in shard_db_paths {
+                    if self.verbose && !first {
+                        println!();
+                    }
+
                     if shard_db_path_set.len() == 1 {
                         let port = self.next_port();
 
@@ -507,6 +575,8 @@ impl Launcher {
                     } else {
                         self.add_replset_shard(mongos_port1, shard_db_path_set.to_vec())?;
                     }
+
+                    first = false;
                 }
 
                 client_options.hosts = vec![
@@ -538,6 +608,11 @@ impl Launcher {
             println!("restarting servers with auth enabled...");
 
             for mut pre_auth_node in pre_auth_nodes {
+                println!(
+                    "    shutting down mongod on port {}...",
+                    pre_auth_node.options.port
+                );
+
                 Command::new("kill")
                     .args(&[pre_auth_node.process.id().to_string()])
                     .spawn()?
@@ -556,6 +631,11 @@ impl Launcher {
             }
 
             for mut pre_auth_router in pre_auth_routers {
+                println!(
+                    "    shutting down mongos on port {}...",
+                    pre_auth_router.options.port
+                );
+
                 Command::new("kill")
                     .args(&[pre_auth_router.process.id().to_string()])
                     .spawn()?
@@ -567,6 +647,8 @@ impl Launcher {
                 self.routers.push(auth_router);
             }
         }
+
+        println!("Cluster is ready!\n");
 
         let cluster = Cluster {
             monger: self.monger,

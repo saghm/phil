@@ -58,6 +58,8 @@ pub struct ClusterOptions {
 
     #[builder(default)]
     pub auth: Option<Credential>,
+
+    verbose: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -103,6 +105,7 @@ impl Cluster {
             options.version_id,
             options.tls,
             options.auth,
+            options.verbose,
         )?;
 
         launcher.initialize_cluster()

@@ -20,6 +20,12 @@ fn create_tempfile() -> Result<PathBuf> {
     let path = std::env::temp_dir().join(format!("phil-keyfile-{}", Uuid::new_v4()));
     std::fs::write(&path, &"phil and ravi")?;
 
+    if cfg!(unix) {
+        use std::{fs::Permissions, os::unix::fs::PermissionsExt};
+
+        std::fs::set_permissions(&path, Permissions::from_mode(0o600))?;
+    }
+
     Ok(path)
 }
 
@@ -121,6 +127,13 @@ fn main() -> Result<()> {
                 .long("auth")
                 .takes_value(false),
         )
+        .arg(
+            Arg::with_name("verbose")
+                .help("log verbosely")
+                .long("verbose")
+                .short("v")
+                .takes_value(false),
+        )
         .get_matches();
 
     let version_id = matches.value_of("ID").unwrap().to_string();
@@ -129,6 +142,7 @@ fn main() -> Result<()> {
         "single" => ClusterOptions::builder()
             .topology(Topology::Single)
             .version_id(version_id)
+            .verbose(matches.is_present("verbose"))
             .build(),
         "replset" => {
             let nodes = matches.value_of("nodes").unwrap_or("3").parse()?;
@@ -141,6 +155,7 @@ fn main() -> Result<()> {
                     set_name,
                 })
                 .version_id(version_id)
+                .verbose(matches.is_present("verbose"))
                 .build()
         }
         "sharded" => {
@@ -170,6 +185,7 @@ fn main() -> Result<()> {
                     config_db_path: create_tempdir()?,
                 })
                 .version_id(version_id)
+                .verbose(matches.is_present("verbose"))
                 .build()
         }
         _ => unreachable!(),
