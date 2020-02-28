@@ -84,6 +84,7 @@ impl From<TlsOptions> for Tls {
 pub struct Credential {
     pub username: String,
     pub password: String,
+    pub key_file: PathBuf,
 }
 
 impl From<Credential> for DriverCredential {

@@ -114,8 +114,12 @@ impl Launcher {
             args.push(path.clone().into());
         }
 
-        if self.credential.is_some() {
-            args.extend_from_slice(&["--auth".into(), "--keyFile".into(), "./keyfile".into()]);
+        if let Some(ref credential) = self.credential {
+            args.extend_from_slice(&[
+                "--auth".into(),
+                "--keyFile".into(),
+                credential.key_file.as_os_str().into(),
+            ]);
         }
 
         if let Some(ref set_name) = options.repl_set_name {
@@ -151,7 +155,7 @@ impl Launcher {
         Ok(node)
     }
 
-    fn configure_repl_set(&self, set_name: &str, config_server: bool) -> Result<()> {
+    fn configure_repl_set(&self, set_name: &str, config_server: bool, log: bool) -> Result<()> {
         let nodes: Vec<_> = self
             .repl_set_addresses(set_name.into())
             .enumerate()
@@ -186,6 +190,10 @@ impl Launcher {
         };
         let mut already_initialized = false;
 
+        if log {
+            println!("configuring replica set...");
+        }
+
         loop {
             let response = db.run_command(cmd.clone(), None);
 
@@ -218,6 +226,10 @@ impl Launcher {
             }
         }
 
+        if log {
+            println!("waiting for primary to be elected...");
+        }
+
         loop {
             let response = db.run_command(doc! { "replSetGetStatus": 1 }, None);
             let response = match response {
@@ -245,7 +257,12 @@ impl Launcher {
         config_server: bool,
         shard_server: bool,
         db_paths: Vec<PathBuf>,
+        log: bool,
     ) -> Result<()> {
+        if log {
+            println!("starting replica set servers...");
+        }
+
         for db_path in db_paths {
             let options = MongodOptions {
                 port: self.next_port(),
@@ -260,7 +277,7 @@ impl Launcher {
             self.nodes.push(node);
         }
 
-        self.configure_repl_set(repl_set_name, config_server)?;
+        self.configure_repl_set(repl_set_name, config_server, log)?;
 
         Ok(())
     }
@@ -277,7 +294,7 @@ impl Launcher {
         let node = self.start_mongod(config_db_options)?;
         self.nodes.push(node);
 
-        self.configure_repl_set(name, true)?;
+        self.configure_repl_set(name, true, false)?;
 
         Ok(())
     }
@@ -310,8 +327,8 @@ impl Launcher {
             }
         }
 
-        if self.credential.is_some() {
-            args.extend_from_slice(&["--keyFile".into(), "./keyfile".into()]);
+        if let Some(ref credential) = self.credential {
+            args.extend_from_slice(&["--keyFile".into(), credential.key_file.as_os_str().into()]);
         }
 
         let process = self
@@ -373,7 +390,7 @@ impl Launcher {
 
     fn add_replset_shard(&mut self, mongos_port: u16, db_paths: Vec<PathBuf>) -> Result<()> {
         let name = format!("phil-replset-shard-{}", self.next_shard_id());
-        self.start_repl_set(&name, false, true, db_paths)?;
+        self.start_repl_set(&name, false, true, db_paths, false)?;
 
         let options = ClientOptions::builder()
             .hosts(vec![localhost_address(mongos_port)])
@@ -432,13 +449,15 @@ impl Launcher {
                     repl_set_name: None,
                 };
 
+                println!("starting single server...");
+
                 let node = self.start_mongod(options)?;
                 self.nodes.push(node);
 
                 client_options.hosts = vec![localhost_address(27017)];
             }
             Topology::ReplicaSet { set_name, db_paths } => {
-                self.start_repl_set(&set_name, false, false, db_paths.to_vec())?;
+                self.start_repl_set(&set_name, false, false, db_paths.to_vec(), true)?;
 
                 client_options.hosts = (0..db_paths.len())
                     .into_iter()
@@ -452,6 +471,8 @@ impl Launcher {
             } => {
                 let mongos_port1 = self.next_port();
                 let mongos_port2 = self.next_port();
+
+                println!("starting config server...");
 
                 let config_db_port = self.next_port();
                 let config_db_name = "phil-config-server";
@@ -468,11 +489,15 @@ impl Launcher {
                     config_db_name: config_db_name.into(),
                 };
 
+                println!("starting sharding routers...");
+
                 let router1 = self.start_mongos(mongos_options1)?;
                 let router2 = self.start_mongos(mongos_options2)?;
 
                 self.routers.push(router1);
                 self.routers.push(router2);
+
+                println!("adding shards...");
 
                 for shard_db_path_set in shard_db_paths {
                     if shard_db_path_set.len() == 1 {
@@ -494,6 +519,8 @@ impl Launcher {
         if let Some(credential) = credential {
             self.credential = Some(credential.clone());
 
+            println!("adding user...");
+
             let client = Client::with_options(client_options.clone())?;
             client.database("admin").run_command(
                 doc! {
@@ -508,6 +535,8 @@ impl Launcher {
 
             let pre_auth_nodes = std::mem::replace(&mut self.nodes, Vec::new());
 
+            println!("restarting servers with auth enabled...");
+
             for mut pre_auth_node in pre_auth_nodes {
                 Command::new("kill")
                     .args(&[pre_auth_node.process.id().to_string()])
@@ -521,6 +550,10 @@ impl Launcher {
             }
 
             let pre_auth_routers = std::mem::replace(&mut self.routers, Vec::new());
+
+            if !pre_auth_routers.is_empty() {
+                println!("restarting sharding routers with auth enabled...");
+            }
 
             for mut pre_auth_router in pre_auth_routers {
                 Command::new("kill")

@@ -1,10 +1,7 @@
 mod display;
 mod error;
 
-use std::{
-    fs::DirBuilder,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use clap::{crate_authors, crate_description, crate_version, App, AppSettings, Arg};
 use phil_core::cluster::{Cluster, ClusterOptions, Credential, TlsOptions, Topology};
@@ -14,9 +11,16 @@ use crate::{display::ClientOptionsWrapper, error::Result};
 
 fn create_tempdir() -> Result<PathBuf> {
     let dir = std::env::temp_dir().join(format!("phil-mongodb-{}", Uuid::new_v4()));
-    DirBuilder::new().create(&dir)?;
+    std::fs::create_dir(&dir)?;
 
     Ok(dir)
+}
+
+fn create_tempfile() -> Result<PathBuf> {
+    let path = std::env::temp_dir().join(format!("phil-keyfile-{}", Uuid::new_v4()));
+    std::fs::write(&path, &"phil and ravi")?;
+
+    Ok(path)
 }
 
 fn main() -> Result<()> {
@@ -196,6 +200,7 @@ fn main() -> Result<()> {
         cluster_options.auth = Some(Credential {
             username: "phil".into(),
             password: "ravi".into(),
+            key_file: create_tempfile()?,
         });
     }
 
