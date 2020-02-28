@@ -636,10 +636,12 @@ impl Launcher {
             }
 
             for mut pre_auth_router in pre_auth_routers {
-                println!(
-                    "    shutting down mongos on port {}...",
-                    pre_auth_router.options.port
-                );
+                if self.verbose {
+                    println!(
+                        "    shutting down mongos on port {}...",
+                        pre_auth_router.options.port
+                    );
+                }
 
                 Command::new("kill")
                     .args(&[pre_auth_router.process.id().to_string()])
