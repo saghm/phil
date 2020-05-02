@@ -531,11 +531,11 @@ impl Launcher {
                 client_options.repl_set_name = Some(set_name.into());
             }
             Topology::Sharded {
+                num_mongos,
                 shard_db_paths,
                 config_db_path,
             } => {
-                let mongos_port1 = self.next_port();
-                let mongos_port2 = self.next_port();
+                let mongos_ports: Vec<_> = (0..num_mongos).map(|_| self.next_port()).collect();
 
                 println!("starting config server...");
 
@@ -543,24 +543,18 @@ impl Launcher {
                 let config_db_name = "phil-config-server";
                 self.add_config_db(config_db_port, config_db_name, config_db_path.clone())?;
 
-                let mongos_options1 = MongosOptions {
-                    port: mongos_port1,
-                    config_db_port,
-                    config_db_name: config_db_name.into(),
-                };
-                let mongos_options2 = MongosOptions {
-                    port: mongos_port2,
-                    config_db_port,
-                    config_db_name: config_db_name.into(),
-                };
-
                 println!("starting sharding routers...");
 
-                let router1 = self.start_mongos(mongos_options1)?;
-                let router2 = self.start_mongos(mongos_options2)?;
+                for mongos_port in &mongos_ports {
+                    let mongos_options1 = MongosOptions {
+                        port: *mongos_port,
+                        config_db_port,
+                        config_db_name: config_db_name.into(),
+                    };
 
-                self.routers.push(router1);
-                self.routers.push(router2);
+                    let router = self.start_mongos(mongos_options1)?;
+                    self.routers.push(router);
+                }
 
                 println!("adding shards...");
 
@@ -574,18 +568,19 @@ impl Launcher {
                     if shard_db_path_set.len() == 1 {
                         let port = self.next_port();
 
-                        self.add_singleton_shard(port, mongos_port1, shard_db_path_set[0].clone())?;
+                        self.add_singleton_shard(
+                            port,
+                            mongos_ports[0],
+                            shard_db_path_set[0].clone(),
+                        )?;
                     } else {
-                        self.add_replset_shard(mongos_port1, shard_db_path_set.to_vec())?;
+                        self.add_replset_shard(mongos_ports[0], shard_db_path_set.to_vec())?;
                     }
 
                     first = false;
                 }
 
-                client_options.hosts = vec![
-                    localhost_address(mongos_port1),
-                    localhost_address(mongos_port2),
-                ];
+                client_options.hosts = mongos_ports.into_iter().map(localhost_address).collect();
             }
         };
 

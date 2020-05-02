@@ -28,6 +28,7 @@ pub enum Topology {
         db_paths: Vec<PathBuf>,
     },
     Sharded {
+        num_mongos: u8,
         shard_db_paths: Vec<Vec<PathBuf>>,
         config_db_path: PathBuf,
     },

@@ -66,6 +66,13 @@ fn main() -> Result<()> {
                 .takes_value(true),
         )
         .arg(
+            Arg::with_name("num-mongos")
+                .help("the number of mongos routers to start")
+                .long("num-mongos")
+                .requires_if("topology", "sharded")
+                .takes_value(true),
+        )
+        .arg(
             Arg::with_name("num-shards")
                 .help("the number of shards to start")
                 .long("num-shards")
@@ -171,6 +178,7 @@ fn main() -> Result<()> {
         }
         "sharded" => {
             let num_shards = matches.value_of("num-shards").unwrap_or("1").parse()?;
+            let num_mongos = matches.value_of("num-mongos").unwrap_or("2").parse()?;
             let replica_set_shards = matches
                 .value_of("shard-type")
                 .map(|shard_type| shard_type == "replset")
@@ -192,6 +200,7 @@ fn main() -> Result<()> {
 
             ClusterOptions::builder()
                 .topology(Topology::Sharded {
+                    num_mongos,
                     shard_db_paths: db_paths?,
                     config_db_path: create_tempdir()?,
                 })
