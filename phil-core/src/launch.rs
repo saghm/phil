@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use bson::{bson, doc, Bson};
+use bson::{doc, Bson};
 use monger_core::Monger;
 use mongodb::{
     options::{ClientOptions, StreamAddress},
