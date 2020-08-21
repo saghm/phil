@@ -56,7 +56,7 @@ pub struct ClusterOptions {
     pub auth: Option<Credential>,
 
     #[builder(default)]
-    extra_mongod_args: Option<Vec<OsString>>,
+    extra_mongod_args: Vec<OsString>,
 
     #[builder(default)]
     verbose: bool,

@@ -1,10 +1,13 @@
 mod display;
 mod error;
 
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
-use clap::{crate_authors, crate_description, crate_version, App, AppSettings, Arg};
 use phil_core::cluster::{Cluster, ClusterOptions, Credential, TlsOptions, Topology};
+use structopt::StructOpt;
 use uuid::Uuid;
 
 use crate::{display::ClientOptionsWrapper, error::Result};
@@ -29,141 +32,95 @@ fn create_tempfile() -> Result<PathBuf> {
     Ok(path)
 }
 
+#[derive(Debug, StructOpt)]
+#[structopt(about, author)]
+struct Options {
+    /// the topology type of the cluster to start
+    #[structopt(name = "TOPOLOGY", possible_values(&["single", "replset", "sharded"]))]
+    topology: String,
+
+    /// the ID of the database version managed by monger to use
+    #[structopt(name = "ID")]
+    id: String,
+
+    /// the number of nodes per replica set
+    #[structopt(long, short, requires_if("topology", "replset"))]
+    nodes: Option<u8>,
+
+    /// the name of the replica set
+    #[structopt(long, short, requires_if("topology", "replset"))]
+    set_name: Option<String>,
+
+    /// the number of mongos routers to start
+    #[structopt(long, requires_if("topology", "sharded"))]
+    num_mongos: Option<u8>,
+
+    /// the number of shards to start
+    #[structopt(long, requires_if("topology", "sharded"))]
+    num_shards: Option<u8>,
+
+    /// what type of shards to start
+    #[structopt(
+		long,
+		requires_if("topology", "sharded"),
+		possible_values(&["single", "replset"]),
+		default_value_if("topology", Some("sharded"), "replset"),
+	)]
+    shard_type: Option<String>,
+
+    /// enable (and require) TLS for the cluster
+    #[structopt(long)]
+    tls: bool,
+
+    /// allow clients to connect to the server without TLS certificates
+    #[structopt(long, requires("tls"))]
+    allow_clients_without_certs: bool,
+
+    /// the certificate authority file to use for TLS (defaults to ./ca.pem)
+    #[structopt(long, requires("tls"))]
+    ca_file: Option<String>,
+
+    /// the server private key certificate file to use for TLS (defaults to ./server.pem)
+    #[structopt(long, requires("tls"))]
+    server_cert_file: Option<String>,
+
+    /// the client private key certificate file to use for TLS (needed to initialize the cluster
+    /// when client certificates are required); defaults to ./client.pem)
+    #[structopt(long, requires("tls"))]
+    client_cert_file: Option<String>,
+
+    /// require authentication to connect to the cluster
+    #[structopt(long)]
+    auth: bool,
+
+    /// log verbosely
+    #[structopt(long, short)]
+    verbose: bool,
+
+    /// extra arguments for the mongod being run
+    #[structopt(name = "MONGODB_ARGS", last(true))]
+    mongod_args: Vec<String>,
+}
+
 fn main() -> Result<()> {
-    #[allow(deprecated)]
-    let matches = App::new("phil")
-        .version(crate_version!())
-        .author(crate_authors!("\n"))
-        .about(crate_description!())
-        .setting(AppSettings::ArgRequiredElseHelp)
-        .arg(
-            Arg::with_name("TOPOLOGY")
-                .help("The topology type of the cluster to start")
-                .required(true)
-                .index(1)
-                .possible_values(&["single", "replset", "sharded"]),
-        )
-        .arg(
-            Arg::with_name("ID")
-                .help("the ID of the database version managed by monger to use")
-                .required(true)
-                .index(2),
-        )
-        .arg(
-            Arg::with_name("nodes")
-                .help("the number of nodes per replica set")
-                .short("n")
-                .long("nodes")
-                .requires_if("topology", "replset")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("set-name")
-                .help("the name of the replica set")
-                .short("s")
-                .long("set-name")
-                .requires_if("topology", "replset")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("num-mongos")
-                .help("the number of mongos routers to start")
-                .long("num-mongos")
-                .requires_if("topology", "sharded")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("num-shards")
-                .help("the number of shards to start")
-                .long("num-shards")
-                .requires_if("topology", "sharded")
-                .takes_value(true),
-        )
-        .arg(
-            Arg::with_name("shard-type")
-                .help("what type of shards to start")
-                .long("shard-type")
-                .requires_if("topology", "sharded")
-                .takes_value(true)
-                .possible_values(&["single", "replset"])
-                .default_value_if("topology", Some("sharded"), "replset"),
-        )
-        .arg(
-            Arg::with_name("tls")
-                .help("enable (and require) TLS for the cluster")
-                .long("tls")
-                .takes_value(false),
-        )
-        .arg(
-            Arg::with_name("allow-clients-without-certs")
-                .help("allow clients to connect to the server without TLS certificates")
-                .long("allow-clients-without-certs")
-                .takes_value(false)
-                .requires("tls"),
-        )
-        .arg(
-            Arg::with_name("ca-file")
-                .help("the certificate authority file to use for TLS (defaults to ./ca.pem)")
-                .long("ca-file")
-                .takes_value(true)
-                .requires("tls"),
-        )
-        .arg(
-            Arg::with_name("server-cert-file")
-                .help(
-                    "the server private key certificate file to use for TLS (defaults to \
-                     ./server.pem)",
-                )
-                .long("server-cert-file")
-                .takes_value(true)
-                .requires("tls"),
-        )
-        .arg(
-            Arg::with_name("client-cert-file")
-                .help(
-                    "the client private key certificate file to use for TLS (needed to initialize \
-                     the cluster when client certificates are required); defaults to ./client.pem)",
-                )
-                .long("client-cert-file")
-                .takes_value(true)
-                .requires("tls"),
-        )
-        .arg(
-            Arg::with_name("auth")
-                .help("require authentication to connect to the cluster")
-                .long("auth")
-                .takes_value(false),
-        )
-        .arg(
-            Arg::with_name("verbose")
-                .help("log verbosely")
-                .long("verbose")
-                .short("v")
-                .takes_value(false),
-        )
-        .arg(
-            Arg::with_name("MONGOD_ARGS")
-                .help("extra arguments for the mongod being run")
-                .multiple(true)
-                .last(true),
-        )
-        .get_matches();
+    let options = Options::from_args();
 
-    let version_id = matches.value_of("ID").unwrap().to_string();
-    let extra_mongod_args = matches
-        .values_of("MONGOD_ARGS")
-        .map(|args| args.map(Into::into).collect());
+    let extra_mongod_args = options
+        .mongod_args
+        .into_iter()
+        .map(OsString::from)
+        .collect();
 
-    let mut cluster_options = match matches.value_of("TOPOLOGY").unwrap() {
+    let mut cluster_options = match options.topology.as_ref() {
         "single" => ClusterOptions::builder()
             .topology(Topology::Single)
-            .version_id(version_id)
-            .verbose(matches.is_present("verbose"))
+            .version_id(options.id)
+            .verbose(options.verbose)
             .extra_mongod_args(extra_mongod_args)
             .build(),
         "replset" => {
-            let nodes = matches.value_of("nodes").unwrap_or("3").parse()?;
-            let set_name = matches.value_of("set-name").unwrap_or("phil").into();
+            let nodes = options.nodes.unwrap_or(3);
+            let set_name = options.set_name.unwrap_or_else(|| "phil".into());
             let paths: Result<Vec<_>> = (0..nodes).map(|_| create_tempdir()).collect();
 
             ClusterOptions::builder()
@@ -171,16 +128,16 @@ fn main() -> Result<()> {
                     db_paths: paths?,
                     set_name,
                 })
-                .version_id(version_id)
-                .verbose(matches.is_present("verbose"))
+                .version_id(options.id)
+                .verbose(options.verbose)
                 .extra_mongod_args(extra_mongod_args)
                 .build()
         }
         "sharded" => {
-            let num_shards = matches.value_of("num-shards").unwrap_or("1").parse()?;
-            let num_mongos = matches.value_of("num-mongos").unwrap_or("2").parse()?;
-            let replica_set_shards = matches
-                .value_of("shard-type")
+            let num_shards = options.num_shards.unwrap_or(1);
+            let num_mongos = options.num_mongos.unwrap_or(2);
+            let replica_set_shards = options
+                .shard_type
                 .map(|shard_type| shard_type == "replset")
                 .unwrap_or(true);
 
@@ -204,28 +161,34 @@ fn main() -> Result<()> {
                     shard_db_paths: db_paths?,
                     config_db_path: create_tempdir()?,
                 })
-                .version_id(version_id)
-                .verbose(matches.is_present("verbose"))
+                .version_id(options.id)
+                .verbose(options.verbose)
                 .extra_mongod_args(extra_mongod_args)
                 .build()
         }
         _ => unreachable!(),
     };
 
-    if matches.is_present("tls") {
+    if options.tls {
         let ca_file_path =
-            Path::new(matches.value_of("ca-file").unwrap_or("./ca.pem")).canonicalize()?;
-        let server_cert_file_path =
-            Path::new(matches.value_of("cert-file").unwrap_or("./server.pem")).canonicalize()?;
+            Path::new(options.ca_file.as_deref().unwrap_or("./ca.pem")).canonicalize()?;
+        let server_cert_file_path = Path::new(
+            options
+                .server_cert_file
+                .as_deref()
+                .unwrap_or("./server.pem"),
+        )
+        .canonicalize()?;
         let client_cert_file_path = Path::new(
-            matches
-                .value_of("client-cert-file")
+            options
+                .client_cert_file
+                .as_deref()
                 .unwrap_or("./client.pem"),
         )
         .canonicalize()?;
 
         cluster_options.tls = Some(TlsOptions {
-            weak_tls: matches.is_present("allow-clients-without-certs"),
+            weak_tls: options.allow_clients_without_certs,
             allow_invalid_certificates: true,
             ca_file_path,
             server_cert_file_path,
@@ -233,7 +196,7 @@ fn main() -> Result<()> {
         });
     }
 
-    if matches.is_present("auth") {
+    if options.auth {
         cluster_options.auth = Some(Credential {
             username: "phil".into(),
             password: "ravi".into(),
