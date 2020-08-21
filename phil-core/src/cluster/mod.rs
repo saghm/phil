@@ -5,13 +5,8 @@ use std::{ffi::OsString, path::PathBuf};
 
 use monger_core::Monger;
 use mongodb::{
-    options::{
-        auth::Credential as DriverCredential,
-        ClientOptions,
-        Tls,
-        TlsOptions as DriverTlsOptions,
-    },
-    Client,
+    options::{ClientOptions, Credential as DriverCredential, Tls, TlsOptions as DriverTlsOptions},
+    sync::Client,
 };
 use typed_builder::TypedBuilder;
 
@@ -60,8 +55,10 @@ pub struct ClusterOptions {
     #[builder(default)]
     pub auth: Option<Credential>,
 
+    #[builder(default)]
     extra_mongod_args: Option<Vec<OsString>>,
 
+    #[builder(default)]
     verbose: bool,
 }
 

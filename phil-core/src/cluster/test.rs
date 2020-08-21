@@ -1,4 +1,4 @@
-use bson::{bson, doc, Bson};
+use mongodb::bson::{self, doc};
 use serde::Deserialize;
 use tempdir::TempDir;
 use uuid::Uuid;
@@ -50,16 +50,10 @@ fn create_and_initiate_repl_set() {
 
     let cluster_options = ClusterOptions::builder()
         .topology(Topology::ReplicaSet {
-            nodes: 3,
             set_name: "test-repl-set".into(),
+            db_paths: db_dirs.iter().map(|t| t.path().to_path_buf()).collect(),
         })
-        .version_id("4.2")
-        .paths(
-            db_dirs
-                .iter()
-                .map(|t| t.path().to_path_buf())
-                .collect::<Vec<_>>(),
-        )
+        .version_id("4.2".into())
         .build();
 
     let cluster = AutoShutdownCluster::new(cluster_options);
@@ -70,7 +64,7 @@ fn create_and_initiate_repl_set() {
         .run_command(doc! { "replSetGetStatus" : 1 }, None)
         .unwrap();
 
-    let ReplSetStatus { set } = bson::from_bson(Bson::Document(response)).unwrap();
+    let ReplSetStatus { set } = bson::from_document(response).unwrap();
 
     assert_eq!(set, "test-repl-set");
 }

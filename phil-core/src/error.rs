@@ -1,4 +1,4 @@
-use bson::Document;
+use mongodb::bson::Document;
 use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -11,7 +11,7 @@ pub enum Error {
     #[error("{inner}")]
     BsonDecoder {
         #[from]
-        inner: bson::DecoderError,
+        inner: mongodb::bson::de::Error,
     },
 
     #[error("{inner}")]

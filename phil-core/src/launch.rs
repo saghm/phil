@@ -5,11 +5,11 @@ use std::{
     time::Duration,
 };
 
-use bson::{doc, Bson};
 use monger_core::Monger;
 use mongodb::{
+    bson::{doc, Bson},
     options::{ClientOptions, StreamAddress},
-    Client,
+    sync::Client,
 };
 use serde::Deserialize;
 
@@ -246,8 +246,7 @@ impl Launcher {
                 }
             };
 
-            let CommandResponse { ok, code_name } =
-                bson::from_bson(Bson::Document(response.clone()))?;
+            let CommandResponse { ok, code_name } = mongodb::bson::from_document(response.clone())?;
 
             if ok == 1.0 {
                 break;
@@ -281,7 +280,7 @@ impl Launcher {
                 }
             };
 
-            let ReplSetStatus { members } = bson::from_bson(Bson::Document(response))?;
+            let ReplSetStatus { members } = mongodb::bson::from_document(response)?;
 
             if members.iter().any(|member| member.state_str == "PRIMARY") {
                 return Ok(());
@@ -436,7 +435,7 @@ impl Launcher {
                 }
             };
 
-            let CommandResponse { ok, .. } = bson::from_bson(Bson::Document(response.clone()))?;
+            let CommandResponse { ok, .. } = mongodb::bson::from_document(response.clone())?;
 
             if ok == 1.0 {
                 break;
@@ -488,7 +487,7 @@ impl Launcher {
                 }
             };
 
-            let CommandResponse { ok, .. } = bson::from_bson(Bson::Document(response.clone()))?;
+            let CommandResponse { ok, .. } = mongodb::bson::from_document(response.clone())?;
 
             if ok == 1.0 {
                 break;

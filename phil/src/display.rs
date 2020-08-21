@@ -1,10 +1,11 @@
 use std::{collections::HashMap, fmt, ops::Deref, time::Duration};
 
 use mongodb::options::{
-    auth::AuthMechanism,
     Acknowledgment,
+    AuthMechanism,
     ClientOptions,
     ReadConcern,
+    ReadConcernLevel,
     ReadPreference,
     SelectionCriteria,
     TagSet,
@@ -40,7 +41,8 @@ fn acknowlegdment_as_str(acknowledgement: &Acknowledgment) -> String {
     match acknowledgement {
         Acknowledgment::Nodes(i) => format!("{}", i),
         Acknowledgment::Majority => "majority".into(),
-        Acknowledgment::Tag(ref s) => s.into(),
+        Acknowledgment::Custom(ref s) => s.into(),
+        _ => "UNKNOWN".into(),
     }
 }
 
@@ -48,6 +50,17 @@ fn options_from_tls(tls: &Tls) -> Option<&TlsOptions> {
     match tls {
         Tls::Enabled(ref opts) => Some(opts),
         Tls::Disabled => None,
+    }
+}
+
+fn read_concern_string(read_concern: &ReadConcern) -> &str {
+    match read_concern.level {
+        ReadConcernLevel::Local => "local",
+        ReadConcernLevel::Majority => "majority",
+        ReadConcernLevel::Linearizable => "linearizable",
+        ReadConcernLevel::Available => "available",
+        ReadConcernLevel::Custom(ref s) => s,
+        _ => "UNKNOWN",
     }
 }
 
@@ -64,10 +77,10 @@ fn read_pref_mode(read_pref: &ReadPreference) -> &str {
 fn read_pref_tags(read_pref: &ReadPreference) -> Option<&Vec<TagSet>> {
     match read_pref {
         ReadPreference::Primary => None,
-        ReadPreference::PrimaryPreferred { ref tag_sets, .. } => tag_sets.as_ref(),
-        ReadPreference::Secondary { ref tag_sets, .. } => tag_sets.as_ref(),
-        ReadPreference::SecondaryPreferred { ref tag_sets, .. } => tag_sets.as_ref(),
-        ReadPreference::Nearest { ref tag_sets, .. } => tag_sets.as_ref(),
+        ReadPreference::PrimaryPreferred { ref options } => options.tag_sets.as_ref(),
+        ReadPreference::Secondary { ref options } => options.tag_sets.as_ref(),
+        ReadPreference::SecondaryPreferred { ref options } => options.tag_sets.as_ref(),
+        ReadPreference::Nearest { ref options } => options.tag_sets.as_ref(),
     }
 }
 
@@ -77,6 +90,7 @@ fn selection_criteria_as_read_pref(
     match selection_critieria {
         SelectionCriteria::ReadPreference(ref read_pref) => Some(read_pref),
         SelectionCriteria::Predicate(..) => None,
+        _ => None,
     }
 }
 
@@ -169,7 +183,7 @@ impl<'a> fmt::Display for ClientOptionsWrapper<'a> {
             "journal", { write_concern } => |concern| concern.journal.as_ref();
             "localThresholdMS", Duration::as_millis { local_threshold };
             "maxPoolSize", { max_pool_size };
-            "readConcernLevel", ReadConcern::as_str { read_concern };
+            "readConcernLevel", read_concern_string { read_concern };
             "readPreference", read_pref_mode { selection_criteria } => selection_criteria_as_read_pref;
             "replicaSet", { repl_set_name };
             "tls", tls_enabled { tls } ;
