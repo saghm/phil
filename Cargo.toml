@@ -1,6 +1,9 @@
 [workspace]
-
 members = [
     "phil",
     "phil-core",
 ]
+
+[patch.crates-io.console]
+git = "https://github.com/mitsuhiko/console"
+rev = "0da89c5"
