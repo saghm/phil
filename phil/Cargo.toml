@@ -14,8 +14,7 @@ structopt = "0.3.16"
 anyhow = "1.0.32"
 
 [dependencies.mongodb]
-git = "https://github.com/mongodb/mongo-rust-driver"
-rev = "65adb24f95d1108600985c6f0b0055db1253ebd7"
+version = "1.1.1"
 default-features = false
 features = ["sync"]
 
