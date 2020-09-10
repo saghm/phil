@@ -133,6 +133,11 @@ struct CommonOptions {
     #[structopt(long, short)]
     verbose: bool,
 
+    /// use the deprecated `--ssl*` options instead of `--tls*` for the underlying mongod/mongos
+    /// binaries
+    #[structopt(long)]
+    deprecated_tls: bool,
+
     /// extra arguments for the mongod being run
     #[structopt(name = "MONGODB_ARGS", last(true))]
     mongod_args: Vec<String>,
@@ -183,6 +188,7 @@ impl TryFrom<SingleOptions> for ClusterOptions {
             .auth(opts.common.auth_options()?)
             .version_id(opts.common.id)
             .verbose(opts.common.verbose)
+            .deprecated_tls_options(opts.common.deprecated_tls)
             .extra_mongod_args(
                 opts.common
                     .mongod_args
@@ -209,6 +215,7 @@ impl TryFrom<ReplSetOptions> for ClusterOptions {
             })
             .version_id(opts.common.id)
             .verbose(opts.common.verbose)
+            .deprecated_tls_options(opts.common.deprecated_tls)
             .extra_mongod_args(
                 opts.common
                     .mongod_args
@@ -248,6 +255,7 @@ impl TryFrom<ShardedOptions> for ClusterOptions {
             .auth(opts.common.auth_options()?)
             .version_id(opts.common.id)
             .verbose(opts.common.verbose)
+            .deprecated_tls_options(opts.common.deprecated_tls)
             .extra_mongod_args(
                 opts.common
                     .mongod_args

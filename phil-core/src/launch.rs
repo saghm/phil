@@ -65,6 +65,7 @@ pub(crate) struct Launcher {
     next_port: u16,
     shard_count: u8,
     verbose: bool,
+    deprecated_tls_options: bool,
     extra_mongod_args: Vec<OsString>,
 }
 
@@ -75,6 +76,7 @@ impl Launcher {
         tls: Option<TlsOptions>,
         credential: Option<Credential>,
         verbose: bool,
+        deprecated_tls_options: bool,
         extra_mongod_args: Vec<OsString>,
     ) -> Result<Self> {
         Ok(Self {
@@ -88,6 +90,7 @@ impl Launcher {
             next_port: 27017,
             shard_count: 0,
             verbose,
+            deprecated_tls_options,
             extra_mongod_args,
         })
     }
@@ -137,14 +140,25 @@ impl Launcher {
         }
 
         if let Some(ref tls_options) = self.tls {
-            args.extend_from_slice(&[
-                "--tlsMode".into(),
-                "requireTLS".into(),
-                "--tlsCAFile".into(),
-                tls_options.ca_file_path.clone().into(),
-                "--tlsCertificateKeyFile".into(),
-                tls_options.server_cert_file_path.clone().into(),
-            ]);
+            if self.deprecated_tls_options {
+                args.extend_from_slice(&[
+                    "--sslMode".into(),
+                    "requireSSL".into(),
+                    "--sslCAFile".into(),
+                    tls_options.ca_file_path.clone().into(),
+                    "--sslPEMKeyFile".into(),
+                    tls_options.server_cert_file_path.clone().into(),
+                ]);
+            } else {
+                args.extend_from_slice(&[
+                    "--tlsMode".into(),
+                    "requireTLS".into(),
+                    "--tlsCAFile".into(),
+                    tls_options.ca_file_path.clone().into(),
+                    "--tlsCertificateKeyFile".into(),
+                    tls_options.server_cert_file_path.clone().into(),
+                ]);
+            }
 
             if tls_options.weak_tls {
                 args.push("--tlsAllowConnectionsWithoutCertificates".into());
@@ -351,15 +365,27 @@ impl Launcher {
         ];
 
         if let Some(ref tls_options) = self.tls {
-            args.extend_from_slice(&[
-                "--tlsMode".into(),
-                "requireTLS".into(),
-                "--tlsCAFile".into(),
-                tls_options.ca_file_path.clone().into(),
-                "--tlsCertificateKeyFile".into(),
-                tls_options.server_cert_file_path.clone().into(),
-                "--tlsAllowInvalidCertificates".into(),
-            ]);
+            if self.deprecated_tls_options {
+                args.extend_from_slice(&[
+                    "--sslMode".into(),
+                    "requireSSL".into(),
+                    "--sslCAFile".into(),
+                    tls_options.ca_file_path.clone().into(),
+                    "--sslPEMKeyFile".into(),
+                    tls_options.server_cert_file_path.clone().into(),
+                    "--sslAllowInvalidCertificates".into(),
+                ]);
+            } else {
+                args.extend_from_slice(&[
+                    "--tlsMode".into(),
+                    "requireTLS".into(),
+                    "--tlsCAFile".into(),
+                    tls_options.ca_file_path.clone().into(),
+                    "--tlsCertificateKeyFile".into(),
+                    tls_options.server_cert_file_path.clone().into(),
+                    "--tlsAllowInvalidCertificates".into(),
+                ]);
+            }
 
             if tls_options.weak_tls {
                 args.push("--tlsAllowConnectionsWithoutCertificates".into());

@@ -60,6 +60,9 @@ pub struct ClusterOptions {
 
     #[builder(default)]
     verbose: bool,
+
+    #[builder(default)]
+    deprecated_tls_options: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +109,7 @@ impl Cluster {
             options.tls,
             options.auth,
             options.verbose,
+            options.deprecated_tls_options,
             options.extra_mongod_args,
         )?;
 
