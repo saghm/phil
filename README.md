@@ -2,7 +2,7 @@
 
 # phil - MongoDB cluster initializer
 
-phil is a command-line utility to initialize MongoDB clusters. It uses into [`monger`](https://crates.io/crates/monger-core)]
+phil is a command-line utility to initialize MongoDB clusters. It uses into [`monger`](https://crates.io/crates/monger-core)
 and [the MongoDB Rust driver](https://crates.io/crates/mongodb) under the hood to start and configure clusters
 
 ## Supported platforms
