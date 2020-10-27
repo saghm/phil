@@ -1,6 +1,6 @@
 [package]
 name = "phil-core"
-version = "0.3.0"
+version = "0.3.1"
 authors = ["Saghm Rossi <saghmrossi@gmail.com>"]
 edition = "2018"
 readme = "../README.md"
