@@ -364,6 +364,27 @@ impl Launcher {
             .into(),
         ];
 
+        let mut potential_set_parameter_args = self.extra_mongod_args.clone();
+
+        if let Some(default_args) = self.monger.get_default_args()? {
+            potential_set_parameter_args
+                .extend(default_args.split_whitespace().map(OsString::from));
+        }
+
+        dbg!(&potential_set_parameter_args);
+
+        if let Some(set_param_index) = potential_set_parameter_args
+            .iter()
+            .position(|arg| arg == "--setParameter")
+        {
+            args.push("--setParameter".into());
+            args.extend(
+                potential_set_parameter_args
+                    .get(set_param_index + 1)
+                    .cloned(),
+            );
+        }
+
         if let Some(ref tls_options) = self.tls {
             if self.deprecated_tls_options {
                 args.extend_from_slice(&[
