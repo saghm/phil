@@ -1315,7 +1315,9 @@ dependencies = [
 
 [[package]]
 name = "monger-core"
-version = "0.13.1"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d3c0be1dc920448c79190a9fcf5db8d0c7771af52b9e3f0362af603cfc2957ee"
 dependencies = [
  "dirs",
  "hyperx",
@@ -1579,7 +1581,7 @@ dependencies = [
 
 [[package]]
 name = "phil-core"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "monger-core",
  "mongodb",

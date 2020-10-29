@@ -1,6 +1,6 @@
 [package]
 name = "phil-core"
-version = "0.3.1"
+version = "0.4.0"
 authors = ["Saghm Rossi <saghmrossi@gmail.com>"]
 edition = "2018"
 readme = "../README.md"
@@ -9,8 +9,7 @@ description = "MongoDB cluster initializer"
 repository = "https://github.com/saghm/phil"
 
 [dependencies]
-#monger-core = "0.13.1"
-monger-core = { path = "../../monger/monger-core" }
+monger-core = "0.14.0"
 percent-encoding = "2.1.0"
 typed-builder = "0.7.0"
 thiserror = "1.0.21"
