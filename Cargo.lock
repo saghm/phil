@@ -1566,13 +1566,13 @@ dependencies = [
 
 [[package]]
 name = "phil"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "clap",
  "mongodb",
  "percent-encoding 2.1.0",
- "phil-core",
+ "phil-core 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "self_update",
  "structopt",
  "thiserror",
@@ -1592,6 +1592,21 @@ dependencies = [
  "thiserror",
  "typed-builder 0.7.0",
  "uuid",
+]
+
+[[package]]
+name = "phil-core"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7fadeededc5076cd2376be35ea8e3e2f5403991af79116a0b604bc3029cb0c1"
+dependencies = [
+ "monger-core",
+ "mongodb",
+ "percent-encoding 2.1.0",
+ "rand 0.7.3",
+ "serde",
+ "thiserror",
+ "typed-builder 0.7.0",
 ]
 
 [[package]]
