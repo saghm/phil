@@ -5,12 +5,13 @@ use std::{
     time::Duration,
 };
 
-use monger_core::Monger;
+use monger_core::{LogFile, LogFileType, Monger};
 use mongodb::{
     bson::{doc, Bson},
     options::{ClientOptions, StreamAddress},
     sync::Client,
 };
+use rand::seq::IteratorRandom;
 use serde::Deserialize;
 
 use crate::{
@@ -36,7 +37,7 @@ pub(crate) struct MongodOptions {
     port: u16,
     db_path: Option<PathBuf>,
     config_server: bool,
-    shard_server: bool,
+    shard_num: Option<usize>,
     repl_set_name: Option<String>,
 }
 
@@ -66,6 +67,8 @@ pub(crate) struct Launcher {
     shard_count: u8,
     verbose: bool,
     deprecated_tls_options: bool,
+    save_logs: bool,
+    cluster_id: String,
     extra_mongod_args: Vec<OsString>,
 }
 
@@ -77,6 +80,7 @@ impl Launcher {
         credential: Option<Credential>,
         verbose: bool,
         deprecated_tls_options: bool,
+        save_logs: bool,
         extra_mongod_args: Vec<OsString>,
     ) -> Result<Self> {
         Ok(Self {
@@ -91,6 +95,10 @@ impl Launcher {
             shard_count: 0,
             verbose,
             deprecated_tls_options,
+            save_logs,
+            cluster_id: (0..8)
+                .map(|_| alpha_numeric().choose(&mut rand::thread_rng()).unwrap())
+                .collect(),
             extra_mongod_args,
         })
     }
@@ -165,7 +173,7 @@ impl Launcher {
             }
         }
 
-        if options.shard_server {
+        if options.shard_num.is_some() {
             args.push("--shardsvr".into());
         }
 
@@ -180,7 +188,7 @@ impl Launcher {
                 print!(" config server");
             }
 
-            if options.shard_server {
+            if options.shard_num.is_some() {
                 print!(" shard server");
             }
 
@@ -201,7 +209,27 @@ impl Launcher {
             println!("...");
         }
 
-        let process = self.monger.start_mongod(args, &self.version, false)?;
+        let log_file = if self.save_logs {
+            let node_type = if options.config_server {
+                LogFileType::ConfigServer
+            } else if let Some(shard_num) = options.shard_num {
+                LogFileType::ShardNode { shard_num }
+            } else {
+                LogFileType::DataNode
+            };
+
+            Some(LogFile {
+                cluster_id: self.cluster_id.clone(),
+                port: options.port,
+                node_type,
+            })
+        } else {
+            None
+        };
+
+        let process = self
+            .monger
+            .start_mongod(args, &self.version, false, log_file)?;
         let node = Node { process, options };
 
         Ok(node)
@@ -308,7 +336,7 @@ impl Launcher {
         &mut self,
         repl_set_name: &str,
         config_server: bool,
-        shard_server: bool,
+        shard_num: Option<usize>,
         db_paths: Vec<PathBuf>,
         log: bool,
     ) -> Result<()> {
@@ -321,7 +349,7 @@ impl Launcher {
                 port: self.next_port(),
                 db_path: Some(db_path),
                 config_server,
-                shard_server,
+                shard_num,
                 repl_set_name: Some(repl_set_name.into()),
             };
 
@@ -340,7 +368,7 @@ impl Launcher {
             port,
             db_path: Some(db_path),
             config_server: true,
-            shard_server: false,
+            shard_num: None,
             repl_set_name: Some(name.into()),
         };
 
@@ -370,8 +398,6 @@ impl Launcher {
             potential_set_parameter_args
                 .extend(default_args.split_whitespace().map(OsString::from));
         }
-
-        dbg!(&potential_set_parameter_args);
 
         if let Some(set_param_index) = potential_set_parameter_args
             .iter()
@@ -431,20 +457,36 @@ impl Launcher {
             println!("...");
         }
 
+        let log_file = if self.save_logs {
+            Some(LogFile {
+                cluster_id: self.cluster_id.clone(),
+                port: options.port,
+                node_type: LogFileType::ShardingRouter,
+            })
+        } else {
+            None
+        };
+
         let process = self
             .monger
-            .run_background_command("mongos", args, &self.version)?;
+            .start_mongos(args, &self.version, false, log_file)?;
         let router = Router { process, options };
 
         Ok(router)
     }
 
-    fn add_singleton_shard(&mut self, port: u16, mongos_port: u16, db_path: PathBuf) -> Result<()> {
+    fn add_singleton_shard(
+        &mut self,
+        shard_num: usize,
+        port: u16,
+        mongos_port: u16,
+        db_path: PathBuf,
+    ) -> Result<()> {
         let options = MongodOptions {
             port,
             db_path: Some(db_path),
             config_server: false,
-            shard_server: true,
+            shard_num: Some(shard_num),
             repl_set_name: None,
         };
 
@@ -492,9 +534,14 @@ impl Launcher {
         Ok(())
     }
 
-    fn add_replset_shard(&mut self, mongos_port: u16, db_paths: Vec<PathBuf>) -> Result<()> {
+    fn add_replset_shard(
+        &mut self,
+        shard_num: usize,
+        mongos_port: u16,
+        db_paths: Vec<PathBuf>,
+    ) -> Result<()> {
         let name = format!("phil-replset-shard-{}", self.next_shard_id());
-        self.start_repl_set(&name, false, true, db_paths, false)?;
+        self.start_repl_set(&name, false, Some(shard_num), db_paths, false)?;
 
         let options = ClientOptions::builder()
             .hosts(vec![localhost_address(mongos_port)])
@@ -550,13 +597,22 @@ impl Launcher {
             .build();
         let credential = self.credential.take();
 
+        self.monger.clear_cluster_logs(&self.cluster_id)?;
+
+        if self.save_logs {
+            println!(
+                "NOTE: log files saved under cluster id '{}'\n",
+                self.cluster_id
+            );
+        }
+
         match self.topology.clone() {
             Topology::Single => {
                 let options = MongodOptions {
                     port: 27017,
                     db_path: None,
                     config_server: false,
-                    shard_server: false,
+                    shard_num: None,
                     repl_set_name: None,
                 };
 
@@ -568,7 +624,7 @@ impl Launcher {
                 client_options.hosts = vec![localhost_address(27017)];
             }
             Topology::ReplicaSet { set_name, db_paths } => {
-                self.start_repl_set(&set_name, false, false, db_paths.to_vec(), true)?;
+                self.start_repl_set(&set_name, false, None, db_paths.to_vec(), true)?;
 
                 client_options.hosts = (0..db_paths.len())
                     .into_iter()
@@ -606,7 +662,7 @@ impl Launcher {
 
                 let mut first = true;
 
-                for shard_db_path_set in shard_db_paths {
+                for (i, shard_db_path_set) in shard_db_paths.into_iter().enumerate() {
                     if self.verbose && !first {
                         println!();
                     }
@@ -615,12 +671,13 @@ impl Launcher {
                         let port = self.next_port();
 
                         self.add_singleton_shard(
+                            i,
                             port,
                             mongos_ports[0],
                             shard_db_path_set[0].clone(),
                         )?;
                     } else {
-                        self.add_replset_shard(mongos_ports[0], shard_db_path_set.to_vec())?;
+                        self.add_replset_shard(i, mongos_ports[0], shard_db_path_set.to_vec())?;
                     }
 
                     first = false;
@@ -706,6 +763,7 @@ impl Launcher {
             tls: self.tls,
             auth: self.credential,
             nodes: self.nodes,
+            cluster_id: self.cluster_id,
         };
 
         Ok(cluster)
@@ -729,4 +787,8 @@ struct ReplSetStatus {
 #[serde(rename_all = "camelCase")]
 struct ReplSetMember {
     state_str: String,
+}
+
+fn alpha_numeric() -> impl Iterator<Item = char> {
+    ('0'..'9').chain('A'..'Z').chain('a'..'z')
 }

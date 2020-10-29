@@ -38,6 +38,7 @@ pub struct Cluster {
     pub(crate) tls: Option<TlsOptions>,
     pub(crate) auth: Option<Credential>,
     pub(crate) nodes: Vec<Node>,
+    pub(crate) cluster_id: String,
 }
 
 #[derive(Clone, Debug, TypedBuilder)]
@@ -63,6 +64,9 @@ pub struct ClusterOptions {
 
     #[builder(default)]
     deprecated_tls_options: bool,
+
+    #[builder(default)]
+    save_logs: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -110,6 +114,7 @@ impl Cluster {
             options.auth,
             options.verbose,
             options.deprecated_tls_options,
+            options.save_logs,
             options.extra_mongod_args,
         )?;
 
